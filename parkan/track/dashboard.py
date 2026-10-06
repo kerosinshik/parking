@@ -207,6 +207,15 @@ function table(head, rows, {left = [0]} = {}) {
 }
 const card = (title, note, body) => `<div class="card"><h2>${esc(title)}</h2>${note ? `<p class="note">${note}</p>` : ""}${body}</div>`;
 const empty = what => `<div class="card empty">${esc(what)}: журнал ещё не собран. Запустите <code>parkan track-sync</code>.</div>`;
+// «Общество с ограниченной ответственностью "Лента"» -> «ООО "Лента"»
+const ORG = [[/публичное акционерное общество/gi, "ПАО"], [/непубличное акционерное общество/gi, "АО"],
+  [/акционерное общество/gi, "АО"], [/общество с ограниченной ответственностью/gi, "ООО"],
+  [/индивидуальный предприниматель/gi, "ИП"], [/федеральное государственное\s+бюджетное\s+учреждение/gi, "ФГБУ"],
+  [/государственное бюджетное учреждение/gi, "ГБУ"]];
+const org = s => ORG.reduce((a, [re, r]) => a.replace(re, r), String(s ?? "")).replace(/\s+/g, " ").trim();
+// «Российская Федерация, город Москва, внутригородская территория муниципальный округ X, улица…» -> «улица…»
+const addr = s => String(s ?? "").replace(/^Российская Федерация,\s*/i, "").replace(/^город Москва,\s*/i, "")
+  .replace(/^(город Москва,\s*)?внутригородская территория[^,]*,\s*/i, "").replace(/^г\.?\s*Москва,\s*/i, "");
 const net = v => `<span class="${v > 0 ? "pos" : v < 0 ? "neg" : ""}">${sgn(v)}</span>`;
 
 /* ---------- общепит и алкоритейл ---------- */
@@ -230,12 +239,12 @@ function renderLicenses() {
         L.districts.map(d => [esc(d.district), int(d.opened), int(d.closed), net(d.net), int(d.active)]))}</div>`) +
     card("Сети и операторы за 90 дней", "Юрлица с наибольшим числом открытий и закрытий.",
       `<div class="scroll tall">${table(["Юрлицо", "Открыто", "Закрыто", "Действует"],
-        L.chains.map(c => [esc(c.subject), int(c.opened), int(c.closed), int(c.active)]))}</div>`) +
+        L.chains.map(c => [esc(org(c.subject)), int(c.opened), int(c.closed), int(c.active)]))}</div>`) +
   `</div>` +
     card("Последние 14 дней", "Открытия и закрытия точек по датам в реестре.",
       `<div class="scroll tall">${table(["Дата", "Событие", "Точка", "Юрлицо", "Район", "Тип"],
         L.recent.map(x => [x.date.split("-").reverse().join("."), `<span class="pill ${x.kind === "открытие" ? "open" : "close"}">${x.kind}</span>`,
-          esc(x.name), esc(x.subject), esc(x.district), x.job === "РПО" ? "общепит" : "розница"]), {left: [0, 1, 2, 3, 4, 5]})}</div>`);
+          esc(x.name), esc(org(x.subject)), esc(x.district), x.job === "РПО" ? "общепит" : "розница"]), {left: [0, 1, 2, 3, 4, 5]})}</div>`);
   function sOC() { return [{name: "Открытия", color: css("--s1")}, {name: "Закрытия", color: css("--s2")}]; }
   for (const [job, id] of [["РПО", "lic-rpo"], ["РПА", "lic-rpa"]])
     lineChart($(id), L.weeks, [{name: "Открытия", color: css("--s1"), values: L.series[job].opened},
@@ -263,9 +272,11 @@ function renderLots() {
       `<div class="scroll tall">${table(["Район", "На торгах", "Медиана цены", "Медиана за м²", "Уличный тариф рядом"],
         P.districts.map(d => [esc(d.district), int(d.on_sale), mln(d.median_price), rub(d.median_m2),
           d.street_tariff == null ? "—" : rub(d.street_tariff) + "/ч"]))}</div>`) +
-    card("Ближайшие окончания приёма заявок", "", `<div class="scroll tall">${table(["Адрес", "Район", "Цена", "Площадь", "Заявки до", "Торги"],
-      P.upcoming.map(u => [esc(u.address), esc(u.district), mln(u.price), u.space == null ? "—" : u.space.toLocaleString("ru-RU") + " м²",
-        esc(u.end || "—"), esc(u.trades || "—")]), {left: [0, 1]})}</div>`);
+    card("Ближайшие окончания приёма заявок", "Лоты по одному адресу и с одной датой торгов сгруппированы.",
+      `<div class="scroll tall">${table(["Адрес", "Район", "Лотов", "Стартовая цена", "Площадь", "Заявки до", "Торги"],
+      P.upcoming.map(u => [esc(addr(u.address)), esc(u.district), int(u.lots),
+        u.price_min === u.price_max ? mln(u.price_min) : `${mln(u.price_min)} – ${mln(u.price_max)}`,
+        u.space == null ? "—" : u.space.toLocaleString("ru-RU") + " м²", esc(u.end || "—"), esc(u.trades || "—")]), {left: [0, 1]})}</div>`);
   lineChart($("lots-new"), P.weeks, [{name: "Лотов", color: css("--s1"), values: P.new}], {every: 8});
   lineChart($("lots-price"), P.weeks, [{name: "Медиана", color: css("--s1"), values: P.median_price}],
     {every: 8, yFmt: v => (v / 1e6).toLocaleString("ru-RU", {maximumFractionDigits: 1}) + " млн", tipFmt: mln});
@@ -291,14 +302,14 @@ function renderWorks() {
   `</div><div class="grid2">` +
     card("Исполнители за 30 дней", "Кто ведёт аварийные работы: число вызовов, доля с отключением абонентов, плановая длительность.",
       `<div class="scroll tall">${table(["Исполнитель", "Вызовов", "С отключением", "Медиана, дней", "Сейчас"],
-        (W.executors || []).map(x => [esc(x.lead), int(x.n30), pct(x.outage_share), x.median_days == null ? "—" : int(x.median_days), int(x.active)]))}</div>`) +
+        (W.executors || []).map(x => [esc(org(x.lead)), int(x.n30), pct(x.outage_share), x.median_days == null ? "—" : int(x.median_days), int(x.active)]))}</div>`) +
     card("Районы", "Аварийные работы: действуют сейчас и зарегистрированы за 30 дней.",
       `<div class="scroll tall">${table(["Район", "Сейчас", "За 30 дней"], (W.em_districts || []).map(r => [esc(r[0]), int(r[1]), int(r[2])]))}</div>`) +
   `</div>` +
     (pk ? card("Где работы задевают платную парковку", "Аварийные работы и земляные работы до 120 дней и площадью до 2 га, с запасом 10 м. Длительные ограждения благоустройства не учитываются.",
       `<div class="scroll">${table(["Район", "Мест под работами"], pk.by_district.map(r => [esc(r[0]), int(r[1])]))}</div>`) : "") +
     card("Последние аварийные вызовы", "", `<div class="scroll tall">${table(["Дата", "Район", "Сеть", "Исполнитель", "Отключение", "Место"],
-      (W.em_recent || []).map(x => [esc(x.date), esc(x.district), esc(x.net), esc(x.lead), x.outage ? `<span class="pill close">да</span>` : "нет", esc(x.place)]),
+      (W.em_recent || []).map(x => [esc(x.date), esc(x.district), esc(x.net), esc(org(x.lead)), x.outage ? `<span class="pill close">да</span>` : "нет", esc(addr(x.place) || "—")]),
       {left: [0, 1, 2, 3, 5]})}</div>`);
   if (emS.length) lineChart($("em-days"), W.days, emS, {every: 14});
   if (ewS.length) lineChart($("ew-days"), W.days, ewS, {every: 14});

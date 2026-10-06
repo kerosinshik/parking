@@ -119,7 +119,7 @@ def test_parking_lots_metrics(con, tmp_path):
     t = m["tiles"]
     assert (t["on_sale"], t["new30"], t["median_price"], t["total"]) == (2, 2, 1_500_000, 3)
     assert t["median_m2"] == pytest.approx((125_000 + 100_000) / 2)
-    assert m["districts"][0]["on_sale"] == 2 and m["upcoming"][0]["address"] == "ул. 2"
+    assert m["districts"][0]["on_sale"] == 2 and m["upcoming"][0]["address"] == "ул. 2" and m["upcoming"][0]["lots"] == 1
 
     data[1461][0]["Stage"] = "снято с публикации"
     sync_dataset(con, FakeClient(data), LOTS, tmp_path, observed_at=datetime(2026, 10, 4))

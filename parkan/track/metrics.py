@@ -34,7 +34,8 @@ def _view(con, state_dir, ds_id: int, name: str) -> bool:
 
 
 def _weeks(today: date, n: int) -> list[date]:
-    start = today - timedelta(days=today.weekday()) - timedelta(weeks=n - 1)
+    """Начала последних n завершённых недель (текущая неполная неделя не входит)."""
+    start = today - timedelta(days=today.weekday()) - timedelta(weeks=n)
     return [start + timedelta(weeks=i) for i in range(n)]
 
 
@@ -50,7 +51,8 @@ def licenses(con, state_dir, today: date) -> dict | None:
         return None
     con.execute(f"""
         CREATE OR REPLACE TEMP TABLE lic AS
-        SELECT record_id, {_j('ObjectName')} AS name, {_j('SubjectName')} AS subject, {_j('INN')} AS inn,
+        SELECT record_id, trim(regexp_replace({_j('ObjectName')}, '\\s+', ' ', 'g')) AS name,
+               trim(regexp_replace({_j('SubjectName')}, '\\s+', ' ', 'g')) AS subject, {_j('INN')} AS inn,
                {_j('District')} AS district, {_j('Address')} AS address, {_j('JobType')} AS job,
                {_j('CurrentLicenseState')} AS state, {_d('LicenseBegin')} AS begin_d,
                {_d('InstallDateOfCurrentLicenseState')} AS state_d,
@@ -182,9 +184,11 @@ def parking_lots(con, state_dir, today: date, parking_con=None) -> dict | None:
         mt = ts[len(ts) // 2] if ts else None
         districts.append({"district": d, "on_sale": n, "median_price": mp, "median_m2": mpm,
                           "street_tariff": mt, "tariff_coverage": len(ts) / n if n else 0})
-    upcoming = [dict(zip(("address", "district", "price", "space", "end", "trades"), r)) for r in con.execute(f"""
-        SELECT address, district, price, space, strftime(end_d, '%d.%m.%Y'), strftime(trades_d, '%d.%m.%Y')
-        FROM lots WHERE {on_sale} ORDER BY end_d, price LIMIT 40
+    upcoming = [dict(zip(("address", "district", "lots", "price_min", "price_max", "space", "end", "trades"), r))
+                for r in con.execute(f"""
+        SELECT address, district, count(*), min(price), max(price), median(space),
+               strftime(end_d, '%d.%m.%Y'), strftime(trades_d, '%d.%m.%Y')
+        FROM lots WHERE {on_sale} GROUP BY address, district, end_d, trades_d ORDER BY end_d, count(*) DESC LIMIT 40
     """, [today]).fetchall()]
     stage_changes = 0
     src = events_source(state_dir, 1461)
@@ -257,7 +261,7 @@ def works(con, state_dir, today: date, parking_con=None) -> dict | None:
     has_ew = _view(con, state_dir, 62501, "ew_raw")
     if not (has_em or has_ew):
         return None
-    days = [today - timedelta(days=i) for i in range(89, -1, -1)]
+    days = [today - timedelta(days=i) for i in range(90, 0, -1)]   # без сегодняшнего неполного дня
     out = {"days": [d.isoformat() for d in days]}
     if has_em:
         con.execute(f"""
@@ -265,7 +269,7 @@ def works(con, state_dir, today: date, parking_con=None) -> dict | None:
             SELECT record_id, {_d('EmCallDate')} AS reg_d, {_d('WorkStartDate')} AS start_d,
                    {_d('WorkEndDate')} AS end_d, {_j('EngineeringNetObj')} AS net, {_j('LeadOfWork')} AS lead,
                    {_j('District')} AS district, {_j('SignOfEmergency')} = 'С отключением абонентов' AS outage,
-                   {_j('IsCrashSignOfEmergency')} = 'Да' AS crash, {_j('WorkPlaceDescription')} AS place,
+                   {_j('IsCrashSignOfEmergency')} = 'Да' AS crash, coalesce(nullif({_j('WorkPlaceDescription')}, ''), {_j('AddressOfNearbyBuilding')}) AS place,
                    {_j('EmergencyDescription')} AS descr
             FROM em_raw
         """)
@@ -309,7 +313,7 @@ def works(con, state_dir, today: date, parking_con=None) -> dict | None:
         out["ew_series"] = {
             "Земляные работы": _series(con.execute("SELECT reg_d, count(*) FROM ew WHERE reg_d >= ? AND earth "
                                                    "GROUP BY 1", [days[0]]).fetchall(), days),
-            "Только ограждения и объекты": _series(con.execute("SELECT reg_d, count(*) FROM ew WHERE reg_d >= ? "
+            "Ограждения": _series(con.execute("SELECT reg_d, count(*) FROM ew WHERE reg_d >= ? "
                                                                "AND NOT earth GROUP BY 1", [days[0]]).fetchall(), days),
         }
         out["ew_tiles"] = dict(zip(("active_earth", "active_all", "new30"), con.execute("""
