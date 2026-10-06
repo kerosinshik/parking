@@ -103,3 +103,23 @@ def test_rows_from_file_payload():
     rows, v = mosdata.rows_from_file_payload({"version": {"VersionNumber": 2}, "rows": [1]})
     assert rows == [1] and v == "2"
     assert mosdata.rows_from_file_payload([1, 2]) == ([1, 2], None)
+
+
+def test_iter_features_converts_geojson_to_rows():
+    feats = [{"type": "Feature", "geometry": {"type": "MultiLineString", "coordinates": [[[37.6, 55.75], [37.601, 55.75]]]},
+              "properties": {"datasetId": 623, "rowId": None,
+                             "attributes": {"global_id": 10 + i, "ID": i, "District": "район Т", "CarCapacity": 5}}}
+             for i in range(3)]
+
+    def transport(url, headers=None):
+        q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
+        assert "/features" in url
+        top, skip = int(q["$top"]), int(q["$skip"])
+        return 200, json.dumps({"type": "FeatureCollection", "features": feats[skip:skip + top]}).encode()
+
+    rows = list(mosdata.MosDataClient("KEY", transport=transport, page_size=2).iter_features())
+    assert [r["global_id"] for r in rows] == [10, 11, 12]
+    seg = mosdata.normalize_row(rows[0])
+    assert seg["parking_id"] == "10" and seg["latitude"] == pytest.approx(55.75)
+    assert seg["edge_length_m"] == pytest.approx(62.6, abs=1)
+    assert json.loads(seg["geometry"])["type"] == "MultiLineString"

@@ -34,7 +34,7 @@ def cmd_init(a, con):
 def cmd_fetch_623(a, con):
     client = mosdata.MosDataClient(os.environ.get("MOS_API_KEY", ""), page_size=a.page_size)
     version = client.version(a.dataset)
-    rows = list(client.iter_rows(a.dataset))
+    rows = list(client.iter_rows(a.dataset) if a.no_geometry else client.iter_features(a.dataset))
     payload = json.dumps({"version": version, "rows": rows}, ensure_ascii=False).encode()
     path, new = store_bytes(con, f"mos_{a.dataset}", payload, suffix=".json", raw_dir=a.raw_dir,
                             meta={"version": version})
@@ -128,7 +128,7 @@ def cmd_summary(a, con):
 
 
 def cmd_report(a, con):
-    print(f"Отчёт: {render(con, a.out, _mart_params(a), a.title)}")
+    print(f"Отчёт: {render(con, a.out, _mart_params(a), a.title, fragment=getattr(a, 'fragment', False))}")
 
 
 def cmd_export(a, con):
@@ -176,6 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("fetch-623", help="скачать набор № 623 через apidata.mos.ru (нужен MOS_API_KEY)")
     sp.add_argument("--dataset", type=int, default=mosdata.PARKING_DATASET_ID)
     sp.add_argument("--page-size", type=int, default=1000)
+    sp.add_argument("--no-geometry", action="store_true", help="брать /rows вместо /features (без координат)")
     sp.set_defaults(fn=cmd_fetch_623)
 
     sp = sub.add_parser("load-623", help="загрузить сохранённый снимок/выгрузку набора № 623 (JSON)")
@@ -224,6 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("report", help="HTML-дашборд")
     sp.add_argument("--out", default="data/report.html")
     sp.add_argument("--title", default="Парковки Москвы")
+    sp.add_argument("--fragment", action="store_true", help="без обёртки html/head/body (для хостинга страниц)")
     mart_opts(sp)
     sp.set_defaults(fn=cmd_report)
 

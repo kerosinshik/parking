@@ -27,14 +27,46 @@ def _num(v, nd=3):
     return None if v is None else round(float(v), nd)
 
 
+CAR = "легков"
+PEAK_PERIOD = "будни"
+
+
+def _tariff_hour_price(t: dict) -> float | None:
+    """Почасовая цена одного тарифа набора № 623.
+
+    Фиксированный тариф — HourPrice. Дифференцированный — цена последующих часов
+    (FollowingHoursPrice / RestOfTheDayPrice), иначе первых часов; цена первых минут
+    пересчитывается в час как запасной вариант.
+    """
+    for k in ("HourPrice", "FollowingHoursPrice", "RestOfTheDayPrice", "FirstHoursPrice"):
+        v = t.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+    price, minutes = t.get("FirstMinutesPrice"), t.get("FirstMinutesNumber")
+    if isinstance(price, (int, float)) and isinstance(minutes, (int, float)) and minutes > 0:
+        return float(price) * 60 / minutes
+    return None
+
+
 def hour_price(price_text) -> float | None:
-    """Максимальная почасовая цена из поля тарифа (JSON-список тарифов, число или строка)."""
+    """Пиковая почасовая цена для легкового автомобиля.
+
+    Для списка тарифов набора № 623 — максимум по будням для легковых (0 — бесплатно);
+    для произвольного поля — максимальное число у ключей цены/тарифа.
+    """
     if price_text in (None, ""):
         return None
     try:
         data = json.loads(price_text)
     except (TypeError, ValueError):
         data = price_text
+    if isinstance(data, list) and data and all(isinstance(t, dict) for t in data) \
+            and any("VehicleTypeForThisTariff" in t for t in data):
+        cars = [t for t in data if not t.get("is_deleted")
+                and CAR in str(t.get("VehicleTypeForThisTariff", "")).lower()]
+        peak = [t for t in cars if PEAK_PERIOD in str(t.get("TariffPeriod", "")).lower()] or cars
+        prices = [p for p in map(_tariff_hour_price, peak) if p is not None]
+        return max(prices) if prices else None
     found: list[float] = []
 
     def walk(v, keyed=False):
@@ -216,10 +248,22 @@ def collect_data(con, params: MartParams | None = None) -> dict:
     }
 
 
-def render(con, out_path, params: MartParams | None = None, title: str = "Парковки Москвы") -> Path:
+def to_fragment(page: str) -> str:
+    """Страница без обёртки html/head/body — для хостинга, который добавляет её сам."""
+    for tag in ("<!doctype html>\n", '<html lang="ru">\n', "<head>\n", '<meta charset="utf-8">\n',
+                '<meta name="viewport" content="width=device-width, initial-scale=1">\n',
+                "</head>\n", "<body>\n", "</body>\n", "</html>\n"):
+        page = page.replace(tag, "", 1)
+    return page
+
+
+def render(con, out_path, params: MartParams | None = None, title: str = "Парковки Москвы",
+           fragment: bool = False) -> Path:
     data = collect_data(con, params)
-    payload = json.dumps(data, ensure_ascii=False, default=str).replace("</", "<\\/")
+    payload = json.dumps(data, ensure_ascii=False, default=str, separators=(",", ":")).replace("</", "<\\/")
     page = TEMPLATE.replace("__TITLE__", html.escape(title)).replace("__DATA__", payload)
+    if fragment:
+        page = to_fragment(page)
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page, encoding="utf-8")
@@ -689,7 +733,7 @@ function draw() {
     ["Сегментов", int(ai.segments), city ? `${int(ai.zones)} парковочных зон` : `${int(ai.zones)} зон`],
     ["Мест для инвалидов", int(ai.disabled), ai.capacity ? fmt(ai.disabled / ai.capacity * 100, 1) + " % мест" : ""],
     ["Длина кромки", fmt(ai.edge_km, 1) + " км", ai.edge_km ? fmt(ai.capacity / ai.edge_km, 0) + " мест на км" : ""],
-    ["Тариф, медиана", rub(ai.price_median), "максимальный почасовой по сегменту"],
+    ["Тариф, медиана", rub(ai.price_median), "легковые, будни, пиковый час"],
   ]);
   $("map-title").textContent = city ? "Карта парковок Москвы" : "Карта парковок: " + key;
   const metric = an ? {label: "Средняя загрузка", lo: "0 %", hi: "100 %", value: s => s.occ}

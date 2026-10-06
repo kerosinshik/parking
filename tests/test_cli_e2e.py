@@ -83,3 +83,24 @@ def test_hour_price_parsing():
     assert hour_price("250") == 250
     assert hour_price('[{"TimeRange": "08:00-21:00"}]') is None
     assert hour_price(None) is None
+
+
+def test_hour_price_real_623_tariffs():
+    """Формат тарифов реального набора № 623: легковые, будни, фиксированный и дифференцированный."""
+    from parkan.report import hour_price
+
+    def t(vehicle, period, **kw):
+        base = {"is_deleted": 0, "TariffType": "фиксированный тариф", "TariffPeriod": period,
+                "TimeRange": "08:00-21:00", "FirstMinutesNumber": None, "FirstMinutesPrice": None,
+                "FirstHoursPrice": None, "FollowingHoursPrice": None, "RestOfTheDayPrice": None,
+                "HourPrice": None, "VehicleTypeForThisTariff": vehicle}
+        return {**base, **kw}
+
+    fixed = [t("Легковой автомобиль", "будни", HourPrice=380), t("Легковой автомобиль", "выходные дни", HourPrice=0),
+             t("Грузовой автомобиль", "будни", HourPrice=1000), t("Легковой автомобиль", "будни", HourPrice=999, is_deleted=1)]
+    assert hour_price(json.dumps(fixed, ensure_ascii=False)) == 380
+    diff = [t("Легковой автомобиль", "будни", TariffType="дифференцированный тариф",
+              FirstMinutesNumber=30, FirstMinutesPrice=50, RestOfTheDayPrice=150)]
+    assert hour_price(json.dumps(diff, ensure_ascii=False)) == 150
+    free = [t("Легковой автомобиль", "праздничные дни", HourPrice=0)]
+    assert hour_price(json.dumps(free, ensure_ascii=False)) == 0

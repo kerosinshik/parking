@@ -70,18 +70,41 @@ class MosDataClient:
         data, _ = get_json(self._url(f"/datasets/{dataset_id}/version"), **self._kw)
         return data
 
-    def iter_rows(self, dataset_id: int = PARKING_DATASET_ID):
+    def _pages(self, path: str, extract):
         skip = 0
         while True:
-            page, _ = get_json(
-                self._url(f"/datasets/{dataset_id}/rows", **{"$top": self.page_size, "$skip": skip}),
-                **self._kw)
-            if not isinstance(page, list):
-                raise ValueError(f"ожидался список строк, получено: {type(page).__name__}")
-            yield from page
-            if len(page) < self.page_size:
+            page, _ = get_json(self._url(path, **{"$top": self.page_size, "$skip": skip}), **self._kw)
+            items = extract(page)
+            yield from items
+            if len(items) < self.page_size:
                 return
             skip += self.page_size
+
+    def iter_rows(self, dataset_id: int = PARKING_DATASET_ID):
+        """Строки без геометрии: {global_id, Number, Cells}."""
+        def extract(page):
+            if not isinstance(page, list):
+                raise ValueError(f"ожидался список строк, получено: {type(page).__name__}")
+            return page
+        return self._pages(f"/datasets/{dataset_id}/rows", extract)
+
+    def iter_features(self, dataset_id: int = PARKING_DATASET_ID):
+        """Строки с геометрией (GeoJSON) в формате rows: {global_id, Cells: {..., geoData}}.
+
+        /rows у набора № 623 не отдаёт координаты, поэтому основной способ — /features.
+        """
+        def extract(page):
+            if not isinstance(page, dict) or not isinstance(page.get("features"), list):
+                raise ValueError("ожидалась коллекция GeoJSON (features)")
+            return [feature_to_row(f) for f in page["features"]]
+        return self._pages(f"/datasets/{dataset_id}/features", extract)
+
+
+def feature_to_row(feature: dict) -> dict:
+    attrs = dict((feature.get("properties") or {}).get("attributes") or {})
+    if feature.get("geometry"):
+        attrs["geoData"] = feature["geometry"]
+    return {"global_id": attrs.get("global_id"), "Cells": attrs}
 
 
 def version_label(v) -> str:
