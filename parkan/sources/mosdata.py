@@ -70,6 +70,18 @@ class MosDataClient:
         data, _ = get_json(self._url(f"/datasets/{dataset_id}/version"), **self._kw)
         return data
 
+    def count(self, dataset_id: int) -> int:
+        data, _ = get_json(self._url(f"/datasets/{dataset_id}/count"), **self._kw)
+        return int(data)
+
+    def features_page(self, dataset_id: int, skip: int, top: int | None = None) -> list[dict]:
+        """Одна страница /features (для параллельной загрузки)."""
+        page, _ = get_json(self._url(f"/datasets/{dataset_id}/features",
+                                     **{"$top": top or self.page_size, "$skip": skip}), **self._kw)
+        if not isinstance(page, dict) or not isinstance(page.get("features"), list):
+            raise ValueError("ожидалась коллекция GeoJSON (features)")
+        return page["features"]
+
     def _pages(self, path: str, extract):
         skip = 0
         while True:

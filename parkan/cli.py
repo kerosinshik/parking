@@ -8,11 +8,14 @@ import os
 import sys
 from pathlib import Path
 
+import duckdb
+
 from . import db, demo
 from .mart import MartParams, area_summary, build_mart, export_parquet
 from .raw import store_bytes, store_file
 from .report import render
 from .sources import SOURCE_TYPES, context, mosdata, occupancy, violations
+from .track.commands import register as register_track
 
 
 def _print_rejected(rejected, limit=10):
@@ -233,6 +236,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--out", default="data/export")
     sp.set_defaults(fn=cmd_export)
 
+    register_track(sub)
+
     sp = sub.add_parser("demo", help="сгенерировать синтетические данные и прогнать весь конвейер")
     sp.add_argument("--workdir", default="demo_out")
     sp.add_argument("--days", type=int, default=14)
@@ -246,7 +251,8 @@ def main(argv=None) -> int:
     a = build_parser().parse_args(argv)
     if a.cmd == "demo" and a.db == str(db.default_db_path()):
         a.db = str(Path(a.workdir) / "parkan.duckdb")
-    con = db.connect(a.db)
+    # учёт динамических данных работает на журнале в Parquet, своя база ему не нужна
+    con = duckdb.connect(":memory:") if getattr(a, "track", False) else db.connect(a.db)
     try:
         return a.fn(a, con) or 0
     except Exception as e:  # понятное сообщение вместо трассировки для пользователя
