@@ -142,6 +142,13 @@ def street_tariffs(parking_con) -> NearestIndex | None:
     return NearestIndex([(p, lat, lon) for p, lat, lon in pts if p is not None])
 
 
+def lot_url(site: str | None, lot_id) -> str | None:
+    """Ссылка на карточку аукциона: из поля WebSite набора, иначе по номеру лота на torgi.mos.ru."""
+    if site:
+        return site if site.startswith("http") else "https://" + site.lstrip("/")
+    return f"https://torgi.mos.ru/tender/{lot_id}" if lot_id else None
+
+
 def parking_lots(con, state_dir, today: date, parking_con=None) -> dict | None:
     if not _view(con, state_dir, 1461, "lots_raw"):
         return None
@@ -150,7 +157,9 @@ def parking_lots(con, state_dir, today: date, parking_con=None) -> dict | None:
         SELECT record_id, {_j('Address')} AS address, {_j('District')} AS district, {_j('AdmArea')} AS adm,
                try_cast({_j('Space')} AS DOUBLE) AS space, try_cast({_j('StartPrice')} AS DOUBLE) AS price,
                {_j('Stage')} AS stage, {_d('StartReceptionDate')} AS start_d, {_d('EndReceptionDate')} AS end_d,
-               {_d('TradesDate')} AS trades_d, geometry, first_seen, last_change
+               {_d('TradesDate')} AS trades_d, geometry, first_seen, last_change,
+               {_j('ID')} AS lot_id, json_extract_string(payload, '$.WebSite[0].WebSite') AS site,
+               {_j('Encumbrances')} AS encumbrances
         FROM lots_raw WHERE {_j('ObjectType')} = 'машино-место'
     """)
     idx = street_tariffs(parking_con)
@@ -195,11 +204,31 @@ def parking_lots(con, state_dir, today: date, parking_con=None) -> dict | None:
     if src:
         stage_changes = con.execute(f"SELECT count(*) FROM {src} WHERE event = 'changed' "
                                     "AND changed_fields LIKE '%Stage%'").fetchone()[0]
+    # все лоты на торгах — для поиска конкретных мест; «выгода» — насколько дешевле медианы своего района
+    lots_list = []
+    for (rid, lot_id, address, district, adm, price, space, end_d, trades_d, site, enc, dmed, n, start_d,
+         geometry) in con.execute(f"""
+        WITH sale AS (SELECT * FROM lots WHERE {on_sale} AND price > 0)
+        SELECT record_id, lot_id, address, district, adm, price, space, strftime(end_d, '%d.%m.%Y'),
+               strftime(trades_d, '%d.%m.%Y'), site, encumbrances,
+               median(price) OVER (PARTITION BY district), count(*) OVER (PARTITION BY district),
+               start_d, geometry
+        FROM sale ORDER BY price
+    """, [today]).fetchall():
+        c = _centroid(geometry)
+        lots_list.append({
+            "id": lot_id, "address": address, "district": district, "adm": adm, "price": price,
+            "space": space, "m2": round(price / space) if space else None, "end": end_d, "trades": trades_d,
+            "url": lot_url(site, lot_id), "enc": enc,
+            "discount": round(1 - price / dmed, 3) if dmed and n >= 5 else None,
+            "street_tariff": tariff.get(rid), "new": bool(start_d and start_d >= today - timedelta(days=2)),   # приём заявок начался недавно
+            "lat": round(c[0], 6) if c else None, "lon": round(c[1], 6) if c else None,
+        })
     return {"weeks": [w.isoformat() for w in weeks], "new": _series(new, weeks),
             "median_price": [None if v == 0 else v for v in _series(med, weeks)],
             "tiles": dict(zip(("on_sale", "new30", "median_price", "median_m2", "total"), t)),
             "districts": districts, "upcoming": upcoming, "stage_changes": stage_changes,
-            "tariff_linked": bool(tariff)}
+            "tariff_linked": bool(tariff), "lots": lots_list}
 
 
 # ---------------------------------------------------------------- помехи по адресу (№ 62461, № 62501)

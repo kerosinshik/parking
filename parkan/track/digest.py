@@ -107,13 +107,16 @@ def lot_findings(con, state_dir, today: date, since: datetime | None) -> list[Fi
         city AS (SELECT quantile_cont(m2, 0.05) AS p05 FROM sale)
         SELECT s.address, s.district, count(*) AS lots, min(s.price) AS price, median(s.space) AS space,
                min(s.m2) AS m2, any_value(d.med) AS med, any_value(d.n) AS n, any_value(c.p05) AS p05,
-               strftime(min(s.end_d), '%d.%m.%Y') AS until_d
+               strftime(min(s.end_d), '%d.%m.%Y') AS until_d, arg_min(s.lot_id, s.price) AS lot_id,
+               arg_min(s.site, s.price) AS site
         FROM sale s JOIN dist d USING (district) CROSS JOIN city c
         WHERE s.{new_cond}
         GROUP BY s.address, s.district
     """, [today, new_arg]).fetchall()
     cheapest = None
-    for address, district, lots, price, space, m2, med, n, p05, until_d in rows:
+    for address, district, lots, price, space, m2, med, n, p05, until_d, lot_id, site in rows:
+        link = metrics.lot_url(site, lot_id)
+        until_d = f"{until_d}; лот: {link}" if link else until_d
         if cheapest is None or price < cheapest[3]:
             cheapest = (address, district, lots, price, space, until_d)
         ratio = price / med if med else 1
@@ -122,35 +125,39 @@ def lot_findings(con, state_dir, today: date, since: datetime | None) -> list[Fi
                                f"Машино-место на {round((1 - ratio) * 100)} % дешевле медианы района",
                                f"{_addr(address)} ({district}): {_mln(price)} при медиане {_mln(med)}"
                                f"{f'; лотов по адресу: {lots}' if lots > 1 else ''}; заявки до {until_d}",
-                               min(1.0, 0.5 + (1 - ratio)), key=f"lots:cheap:{address}:{until_d}"))
+                               min(1.0, 0.5 + (1 - ratio)), key=f"lots:cheap:{address}:{until_d.split(';')[0]}"))
         elif p05 and m2 is not None and m2 <= p05:
             out.append(Finding("lots", "дёшево за м²", "Новый лот среди 5 % самых дешёвых по цене за м²",
                                f"{_addr(address)} ({district}): {round(m2):,} ₽/м², ".replace(",", " ")
-                               + f"{_mln(price)}; заявки до {until_d}", 0.55, key=f"lots:cheap:{address}:{until_d}"))
+                               + f"{_mln(price)}; заявки до {until_d}", 0.55, key=f"lots:cheap:{address}:{until_d.split(';')[0]}"))
     if cheapest:
         a, d, lots, price, space, until_d = cheapest
         out.append(Finding("lots", "самый дешёвый новый", "Самый дешёвый новый лот",
                            f"{_addr(a)} ({d}): {_mln(price)}"
                            f"{f', {space:g} м²'.replace('.', ',') if space else ''}; заявки до {until_d}", 0.4,
-                           key=f"lots:cheapest:{a}:{until_d}"))
+                           key=f"lots:cheapest:{a}:{until_d.split(';')[0]}"))
     # снижение стартовой цены у той же записи (видно только по журналу)
     src = events_source(state_dir, 1461)
     if src and since:
-        for rid, new_p, old_p, addr, district in con.execute(f"""
+        for rid, new_p, old_p, addr, district, lot_id, site in con.execute(f"""
             WITH ev AS (
                 SELECT record_id, observed_at, try_cast(json_extract_string(payload, '$.StartPrice') AS DOUBLE) AS price,
                        json_extract_string(payload, '$.Address') AS address, json_extract_string(payload, '$.District') AS district,
                        json_extract_string(payload, '$.ObjectType') AS kind,
+                       json_extract_string(payload, '$.ID') AS lot_id,
+                       json_extract_string(payload, '$.WebSite[0].WebSite') AS site,
                        lag(try_cast(json_extract_string(payload, '$.StartPrice') AS DOUBLE))
                            OVER (PARTITION BY record_id ORDER BY observed_at) AS prev
                 FROM {src} WHERE event <> 'removed'
             )
-            SELECT record_id, price, prev, address, district FROM ev
+            SELECT record_id, price, prev, address, district, lot_id, site FROM ev
             WHERE observed_at > ? AND kind = 'машино-место' AND prev > 0 AND price < prev * 0.9
         """, [since]).fetchall():
             drop = 1 - new_p / old_p
             out.append(Finding("lots", "снижение цены", f"Стартовая цена снижена на {round(drop * 100)} %",
-                               f"{_addr(addr)} ({district}): {_mln(old_p)} → {_mln(new_p)}", min(1.0, 0.6 + drop),
+                               f"{_addr(addr)} ({district}): {_mln(old_p)} → {_mln(new_p)}"
+                               + (f"; лот: {metrics.lot_url(site, lot_id)}" if metrics.lot_url(site, lot_id) else ""),
+                               min(1.0, 0.6 + drop),
                                key=f"lots:drop:{rid}:{new_p:.0f}"))
     return out
 

@@ -100,6 +100,7 @@ svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nu
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; vertical-align: top; }
 th:first-child, td:first-child, td.l, th.l { text-align: left; }
+td:not(.l) { white-space: nowrap; }
 th { color: var(--ink-2); font-weight: 500; position: sticky; top: 0; background: var(--surface); }
 tbody tr:hover td { background: var(--hover); }
 .pos { color: var(--up); } .neg { color: var(--down); }
@@ -116,6 +117,16 @@ a { color: var(--s1); }
 .ft { font-weight: 600; }
 .fd { color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; }
 .go { justify-self: start; font: inherit; font-size: 12px; background: none; border: 0; padding: 0; color: var(--s1); cursor: pointer; }
+.explain { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: var(--ink-2); font-size: 13px; }
+.explain b { color: var(--ink); font-weight: 600; }
+.filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 4px; }
+.filters label { display: grid; gap: 4px; font-size: 12px; color: var(--ink-2); min-width: 0; }
+.filters select, .filters input { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--axis); border-radius: 6px;
+  background: var(--surface); color: var(--ink); max-width: 100%; }
+.filters input[type="number"] { width: 110px; }
+.more { font: inherit; margin-top: 10px; padding: 6px 12px; border: 1px solid var(--axis); border-radius: 6px; background: var(--surface);
+  color: var(--ink); cursor: pointer; }
+.more:focus-visible, .filters :focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
 .go:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 </style>
@@ -263,34 +274,89 @@ function renderLicenses() {
 }
 
 /* ---------- машино-места ---------- */
+const money = v => v == null ? "—" : v < 1e6 ? Math.round(v / 1000).toLocaleString("ru-RU") + " тыс. ₽" : mln(v);
+const pctOff = d => d == null ? "—" : d > 0 ? `<span class="pos">−${Math.round(d * 100)} %</span>` : `+${Math.round(-d * 100)} %`;
+const LF = {district: "", max: "", q: "", sort: "price", shown: 100};
+const SORTS = {
+  price: [(a, b) => a.price - b.price, "сначала дешёвые"],
+  m2: [(a, b) => (a.m2 ?? 1e12) - (b.m2 ?? 1e12), "дешевле за м²"],
+  discount: [(a, b) => (b.discount ?? -9) - (a.discount ?? -9), "выгоднее относительно района"],
+  end: [(a, b) => dkey(a.end) - dkey(b.end) || a.price - b.price, "скоро закончится приём заявок"],
+};
+function dkey(s) { if (!s) return 9e9; const [d, m, y] = s.split("."); return +(y + m + d); }
+function lotLink(l, text = "Открыть лот ↗") { return l.url ? `<a href="${esc(l.url)}" target="_blank" rel="noopener">${text}</a>` : "—"; }
+
 function renderLots() {
   const P = DATA.lots, root = $("tab-lots");
   if (!P) { root.innerHTML = empty("Торги"); return; }
-  const t = P.tiles;
+  const t = P.tiles, L = P.lots || [];
+  const cheapest = L[0];
+  // самые выгодные: группируем по адресу, берём самый дешёвый лот адреса
+  const groups = {};
+  L.filter(l => l.discount != null && l.discount >= 0.2).forEach(l => {
+    const g = groups[l.address] ||= {best: l, n: 0};
+    g.n++; if (l.price < g.best.price) g.best = l;
+  });
+  const best = Object.values(groups).sort((a, b) => b.best.discount - a.best.discount).slice(0, 12);
+  const districts = [...new Set(L.map(l => l.district).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ru"));
   root.innerHTML = tiles([
-    ["На торгах сейчас", int(t.on_sale), "приём заявок открыт"],
-    ["Новых лотов за 30 дней", int(t.new30), ""],
-    ["Медианная стартовая цена", mln(t.median_price), "лоты на торгах"],
-    ["Медиана за м²", rub(t.median_m2), "стартовая цена / площадь"],
-    ["Смен этапа в журнале", int(P.stage_changes), "видны со второй синхронизации"],
+    ["На торгах сейчас", int(L.length || t.on_sale), "машино-мест, приём заявок открыт"],
+    ["Самый дешёвый", money(cheapest?.price), cheapest ? `${cheapest.district}, ${String(cheapest.space ?? "").replace(".", ",")} м²` : ""],
+    ["Типичная цена", mln(t.median_price), "половина лотов дешевле, половина дороже"],
+    ["Типичная цена за м²", rub(t.median_m2), "чтобы сравнивать места разной площади"],
+    ["Новых за 30 дней", int(t.new30), "выставлено на торги"],
   ]) +
+  card("Как читать цифры", "",
+    `<ul class="explain">
+      <li><b>Стартовая цена</b> — минимальная ставка аукциона. Итоговая цена после торгов обычно выше, в открытых данных её нет.</li>
+      <li><b>Типичная цена (медиана)</b> — середина списка: половина лотов дешевле, половина дороже. В отличие от средней, на неё не влияют единичные очень дешёвые или дорогие лоты.</li>
+      <li><b>Дешевле района на X %</b> — насколько стартовая цена ниже типичной цены машино-места в том же районе (считается, если в районе от 5 лотов).</li>
+      <li><b>Ссылка «Открыть лот»</b> ведёт на карточку аукциона на torgi.mos.ru — там документы, фото и подача заявки.</li>
+    </ul>`) +
+  card("Самые выгодные сейчас", "Адреса, где стартовая цена на 20 % и более ниже типичной для района. Если по адресу несколько лотов, показан самый дешёвый.",
+    best.length ? `<div class="scroll">${table(["Адрес", "Район", "Цена", "Площадь", "Дешевле района", "Лотов", "Заявки до", ""],
+      best.map(g => { const l = g.best; return [esc(addr(l.address)) + (l.new ? ` <span class="pill open">новый</span>` : ""), esc(l.district),
+        money(l.price), l.space == null ? "—" : String(l.space).replace(".", ",") + " м²", pctOff(l.discount), int(g.n), esc(l.end || "—"), lotLink(l)]; }),
+      {left: [0, 1]})}</div>` : `<p class="empty">Сейчас нет лотов заметно дешевле своего района.</p>`) +
+  card("Все лоты на торгах", "Фильтры и сортировка работают прямо на странице.",
+    `<div class="filters">
+      <label>Район <select id="lf-district"><option value="">все районы</option>${districts.map(d => `<option${d === LF.district ? " selected" : ""}>${esc(d)}</option>`).join("")}</select></label>
+      <label>Цена до, млн ₽ <input id="lf-max" type="number" min="0" step="0.1" inputmode="decimal" value="${esc(LF.max)}" placeholder="любая"></label>
+      <label>Адрес <input id="lf-q" type="search" value="${esc(LF.q)}" placeholder="улица, дом"></label>
+      <label>Сортировка <select id="lf-sort">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}"${k === LF.sort ? " selected" : ""}>${v[1]}</option>`).join("")}</select></label>
+    </div><p class="note" id="lf-count"></p><div class="scroll tall" id="lf-table"></div>
+    <button class="more" id="lf-more" hidden>Показать ещё 100</button>`) +
   `<div class="grid2">` +
     card("Новых лотов в неделю", "Машино-места, выставленные городом на открытые аукционы.", `<svg id="lots-new"></svg>`) +
-    card("Медианная стартовая цена по неделям", "Только недели, в которые выставлялись лоты.", `<svg id="lots-price"></svg>`) +
+    card("Типичная стартовая цена по неделям", "Медиана лотов, выставленных за неделю; пропуски — недели без лотов.", `<svg id="lots-price"></svg>`) +
   `</div>` +
-    card("Районы", P.tariff_linked ? "Уличный тариф — медианный почасовой тариф ближайшего платного участка (в пределах 300 м), набор № 623." :
-      "Связка с уличными тарифами появится, если рядом есть база справочника парковок № 623.",
-      `<div class="scroll tall">${table(["Район", "На торгах", "Медиана цены", "Медиана за м²", "Уличный тариф рядом"],
+    card("Районы", P.tariff_linked ? "Уличный тариф — почасовой тариф ближайшего платного участка (в пределах 300 м), набор № 623." : "",
+      `<div class="scroll tall">${table(["Район", "На торгах", "Типичная цена", "Типичная за м²", "Уличный тариф рядом"],
         P.districts.map(d => [esc(d.district), int(d.on_sale), mln(d.median_price), rub(d.median_m2),
-          d.street_tariff == null ? "—" : rub(d.street_tariff) + "/ч"]))}</div>`) +
-    card("Ближайшие окончания приёма заявок", "Лоты по одному адресу и с одной датой торгов сгруппированы.",
-      `<div class="scroll tall">${table(["Адрес", "Район", "Лотов", "Стартовая цена", "Площадь", "Заявки до", "Торги"],
-      P.upcoming.map(u => [esc(addr(u.address)), esc(u.district), int(u.lots),
-        u.price_min === u.price_max ? mln(u.price_min) : `${mln(u.price_min)} – ${mln(u.price_max)}`,
-        u.space == null ? "—" : u.space.toLocaleString("ru-RU") + " м²", esc(u.end || "—"), esc(u.trades || "—")]), {left: [0, 1]})}</div>`);
+          d.street_tariff == null ? "—" : rub(d.street_tariff) + "/ч"]))}</div>`);
+  const upd = () => { LF.shown = 100; renderLotTable(); };
+  $("lf-district").addEventListener("change", e => { LF.district = e.target.value; upd(); });
+  $("lf-max").addEventListener("input", e => { LF.max = e.target.value; upd(); });
+  $("lf-q").addEventListener("input", e => { LF.q = e.target.value; upd(); });
+  $("lf-sort").addEventListener("change", e => { LF.sort = e.target.value; upd(); });
+  $("lf-more").addEventListener("click", () => { LF.shown += 100; renderLotTable(); });
+  renderLotTable();
   lineChart($("lots-new"), P.weeks, [{name: "Лотов", color: css("--s1"), values: P.new}], {every: 8});
   lineChart($("lots-price"), P.weeks, [{name: "Медиана", color: css("--s1"), values: P.median_price}],
     {every: 8, yFmt: v => (v / 1e6).toLocaleString("ru-RU", {maximumFractionDigits: 1}) + " млн", tipFmt: mln});
+}
+
+function renderLotTable() {
+  const L = DATA.lots.lots || [];
+  const max = parseFloat(String(LF.max).replace(",", ".")), q = LF.q.trim().toLowerCase();
+  const rows = L.filter(l => (!LF.district || l.district === LF.district) && (!(max > 0) || l.price <= max * 1e6)
+    && (!q || (l.address || "").toLowerCase().includes(q))).sort(SORTS[LF.sort][0]);
+  $("lf-count").textContent = `Найдено лотов: ${rows.length.toLocaleString("ru-RU")}` + (rows.length > LF.shown ? `, показаны первые ${LF.shown}` : "");
+  $("lf-table").innerHTML = rows.length ? table(["Адрес", "Район", "Стартовая цена", "Площадь", "За м²", "Дешевле района", "Заявки до", "Торги", ""],
+    rows.slice(0, LF.shown).map(l => [esc(addr(l.address)) + (l.new ? ` <span class="pill open">новый</span>` : ""), esc(l.district), money(l.price),
+      l.space == null ? "—" : String(l.space).replace(".", ",") + " м²", rub(l.m2), pctOff(l.discount),
+      esc(l.end || "—"), esc(l.trades || "—"), lotLink(l, "Открыть ↗")]), {left: [0, 1]}) : `<p class="empty">Под фильтры ничего не подходит.</p>`;
+  $("lf-more").hidden = rows.length <= LF.shown;
 }
 
 /* ---------- помехи по адресу ---------- */
