@@ -253,6 +253,7 @@ def main(argv=None) -> int:
         a.db = str(Path(a.workdir) / "parkan.duckdb")
     # учёт динамических данных работает на журнале в Parquet, своя база ему не нужна
     con = duckdb.connect(":memory:") if getattr(a, "track", False) else db.connect(a.db)
+    con.execute("SET enable_progress_bar = false")
     try:
         return a.fn(a, con) or 0
     except Exception as e:  # понятное сообщение вместо трассировки для пользователя

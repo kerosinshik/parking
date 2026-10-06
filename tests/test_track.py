@@ -153,3 +153,57 @@ def test_works_metrics_and_dashboard(con, tmp_path):
     assert {l["dataset"] for l in data["log"]} == {62461, 62501}
     frag = render_dashboard(con, tmp_path, tmp_path / "f.html", today=date(2026, 10, 6), fragment=True).read_text(encoding="utf-8")
     assert frag.startswith("<title>") and "<body>" not in frag
+
+
+def test_digest_helpers():
+    from parkan.track.digest import _robust_z, org, plural
+    assert [plural(n, "авария", "аварии", "аварий") for n in (1, 2, 5, 11, 21, 104)] == \
+        ["авария", "аварии", "аварий", "аварий", "авария", "аварии"]
+    assert org('Общество  с ограниченной ответственностью "Лента"') == 'ООО "Лента"'
+    assert org("ПУБЛИЧНОЕ АКЦИОНЕРНОЕ ОБЩЕСТВО «МОЭК»") == "ПАО «МОЭК»"
+    assert _robust_z(95, [23] * 12) > 3 and _robust_z(24, [20, 22, 23, 25, 24, 21, 23, 22, 26, 24]) < 3
+
+
+def test_digest_findings(con, tmp_path):
+    from parkan.track import digest
+
+    def lot(i, price, addr, start="01.10.2026"):
+        return {"global_id": 7000 + i, "ID": i, "ObjectType": "машино-место", "Stage": "опубликовано",
+                "StartPrice": price, "Space": 13.3, "District": "район А", "Address": addr,
+                "StartReceptionDate": start, "EndReceptionDate": "30.10.2026", "TradesDate": "05.11.2026"}
+    lots = [lot(i, 2_000_000 + i * 1000, f"ул. {i}") for i in range(8)]
+    sync_dataset(con, FakeClient({1461: lots}), LOTS, tmp_path, observed_at=datetime(2026, 10, 5, 7))
+    # следующий день: новый дешёвый лот и снижение цены у существующего
+    lots.append(lot(100, 1_200_000, "ул. Дешёвая, 1", start="05.10.2026"))
+    lots[0]["StartPrice"] = 1_500_000
+    # сеть открыла 4 точки за неделю, раньше точек не было
+    lic_rows = [lic(i, "77", f"ул. Сеть, {i}", "действующая", "02.10.2026", name="Отдохни") for i in range(4)]
+    em = [{"global_id": 300 + i, "EmCallRegNum": f"E{i}", "EmCallDate": "05.10.2026", "WorkStartDate": "05.10.2026",
+           "WorkEndDate": "12.10.2026", "EngineeringNetObj": "Тепловая сеть", "LeadOfWork": "ПАО МОЭК",
+           "District": "район Б", "SignOfEmergency": "С отключением абонентов" if i == 0 else "Без отключения абонентов",
+           "IsCrashSignOfEmergency": "Да", "WorkPlaceDescription": f"дом {i}"} for i in range(5)]
+    client = FakeClient({1461: lots, 586: lic_rows, 62461: em})
+    for ds in (LOTS, LIC, EM):
+        sync_dataset(con, client, ds, tmp_path, observed_at=datetime(2026, 10, 6, 7))
+    items = digest.findings(con, tmp_path, date(2026, 10, 6), limit=30)
+    kinds = {(f.stream, f.kind) for f in items}
+    assert ("lots", "дешевле района") in kinds and ("lots", "снижение цены") in kinds
+    cheap = next(f for f in items if f.kind == "дешевле района")
+    assert "ул. Дешёвая, 1" in cheap.detail and "40 %" in cheap.title
+    drop = next(f for f in items if f.kind == "снижение цены")
+    assert "2,00 млн ₽ → 1,50 млн ₽" in drop.detail
+    assert any(f.kind == "сеть" and "открыто 4 точки" in f.title for f in items)
+    assert any(f.kind == "район" and "район Б: 5 новых аварий" in f.title for f in items)
+    assert sum(f.kind == "отключение" for f in items) == 1
+    assert items == sorted(items, key=lambda f: -f.score)
+    md = digest.to_markdown(items, date(2026, 10, 6), "https://example.test")
+    assert md.startswith("Находки дня, 06.10.2026") and md.endswith("Дашборд: https://example.test")
+
+
+def test_digest_flags_mass_removal(con, tmp_path):
+    from parkan.track import digest
+    rows = [lic(i, str(i), f"ул. {i}", "действующая", "01.01.2025") for i in range(50)]
+    sync_dataset(con, FakeClient({586: rows}), LIC, tmp_path, observed_at=datetime(2026, 10, 5))
+    sync_dataset(con, FakeClient({586: rows[:45]}), LIC, tmp_path, observed_at=datetime(2026, 10, 6), min_ratio=0.5)
+    items = digest.findings(con, tmp_path, date(2026, 10, 6))
+    assert any(f.stream == "data" and "исчезло 5 записей" in f.title for f in items)

@@ -9,14 +9,16 @@ from pathlib import Path
 
 from ..report import to_fragment
 from ..timeutil import now_msk
-from . import metrics
+from . import digest, metrics
 from .streams import STREAMS
 
 
 def collect(con, state_dir, parking_con=None, today: date | None = None) -> dict:
     today = today or now_msk().date()
     ids = [ds.id for s in STREAMS.values() for ds in s.datasets]
+    found = digest.to_json(digest.findings(con, state_dir, today, limit=20))
     return {
+        "findings": found,
         "today": today.isoformat(),
         "generated": now_msk().strftime("%d.%m.%Y %H:%M"),
         "licenses": metrics.licenses(con, state_dir, today),
@@ -107,6 +109,14 @@ tbody tr:hover td { background: var(--hover); }
 #tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border);
   border-radius: 8px; padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.15); display: none; z-index: 10; max-width: 320px; }
 a { color: var(--s1); }
+.finds { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.finds li { border: 1px solid var(--grid); border-radius: 8px; padding: 10px 12px; display: grid; gap: 4px; min-width: 0; }
+.fh { display: flex; align-items: center; gap: 10px; }
+.bar { flex: 0 0 80px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--s1) var(--w), var(--grid) var(--w)); }
+.ft { font-weight: 600; }
+.fd { color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; }
+.go { justify-self: start; font: inherit; font-size: 12px; background: none; border: 0; padding: 0; color: var(--s1); cursor: pointer; }
+.go:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 </style>
 </head>
@@ -115,7 +125,8 @@ a { color: var(--s1); }
   <h1>__TITLE__</h1>
   <p class="sub" id="sub"></p>
   <nav role="tablist" id="tabs"></nav>
-  <section id="tab-licenses" role="tabpanel"></section>
+  <section id="tab-finds" role="tabpanel"></section>
+  <section id="tab-licenses" role="tabpanel" hidden></section>
   <section id="tab-lots" role="tabpanel" hidden></section>
   <section id="tab-works" role="tabpanel" hidden></section>
   <section id="tab-log" role="tabpanel" hidden></section>
@@ -315,6 +326,20 @@ function renderWorks() {
   if (ewS.length) lineChart($("ew-days"), W.days, ewS, {every: 14});
 }
 
+/* ---------- находки дня ---------- */
+const STREAM = {lots: ["Машино-места", "lots"], licenses: ["Общепит и алкоритейл", "licenses"],
+                works: ["Помехи по адресу", "works"], data: ["Качество данных", "log"]};
+function renderFinds() {
+  const F = DATA.findings || [], root = $("tab-finds");
+  if (!F.length) { root.innerHTML = card("Находки дня", "", `<p class="empty">Ничего необычного: все потоки в пределах нормы.</p>`); return; }
+  root.innerHTML = card("Находки дня", "Отклонения от нормы во вчерашних данных и в изменениях с прошлой синхронизации, по убыванию значимости.",
+    `<ol class="finds">${F.map(f => `<li><div class="fh"><span class="pill">${esc(STREAM[f.stream][0])}</span>
+      <span class="bar" style="--w:${Math.round(f.score * 100)}%" title="значимость ${Math.round(f.score * 100)} из 100"></span></div>
+      <div class="ft">${esc(f.title)}</div><div class="fd">${esc(f.detail)}</div>
+      <button class="go" data-tab="${STREAM[f.stream][1]}">Открыть раздел →</button></li>`).join("")}</ol>`);
+  root.querySelectorAll("button.go").forEach(b => b.addEventListener("click", () => select(b.dataset.tab)));
+}
+
 /* ---------- журнал ---------- */
 function renderLog() {
   const root = $("tab-log");
@@ -331,20 +356,20 @@ function renderLog() {
       `Если снимок пришёл неполным, запуск прерывается и ничего не записывает.</p>`);
 }
 
-const TABS = [["licenses", "Общепит и алкоритейл"], ["lots", "Машино-места"], ["works", "Помехи по адресу"], ["log", "Журнал"]];
+const TABS = [["finds", "Находки дня"], ["licenses", "Общепит и алкоритейл"], ["lots", "Машино-места"], ["works", "Помехи по адресу"], ["log", "Журнал"]];
 function select(key) {
   TABS.forEach(([k]) => { $("tab-" + k).hidden = k !== key; document.querySelector(`[data-tab="${k}"]`).setAttribute("aria-selected", k === key); });
   try { localStorage.setItem("pulse-tab", key); } catch (e) {}
 }
-function draw() { renderLicenses(); renderLots(); renderWorks(); renderLog(); }
+function draw() { renderFinds(); renderLicenses(); renderLots(); renderWorks(); renderLog(); }
 function init() {
   $("sub").textContent = `Открытые данные Москвы · данные на ${DATA.today.split("-").reverse().join(".")} · собрано ${DATA.generated} МСК`;
   $("tabs").innerHTML = TABS.map(([k, t]) => `<button role="tab" data-tab="${k}">${t}</button>`).join("");
   $("tabs").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { select(b.dataset.tab); history.replaceState(null, "", "#" + b.dataset.tab); } });
   draw();
   let start = (location.hash || "").slice(1);
-  if (!TABS.some(([k]) => k === start)) { try { start = localStorage.getItem("pulse-tab") || "licenses"; } catch (e) { start = "licenses"; } }
-  select(TABS.some(([k]) => k === start) ? start : "licenses");
+  if (!TABS.some(([k]) => k === start)) { try { start = localStorage.getItem("pulse-tab") || "finds"; } catch (e) { start = "finds"; } }
+  select(TABS.some(([k]) => k === start) ? start : "finds");
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
   new MutationObserver(draw).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
 }

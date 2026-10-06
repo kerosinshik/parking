@@ -59,6 +59,21 @@ def cmd_track_report(a, con) -> int:
     return 0
 
 
+def cmd_track_digest(a, con) -> int:
+    from . import digest
+    today = now_msk().date()
+    items = digest.findings(con, a.state_dir, today, limit=a.limit)
+    text = digest.to_markdown(items, today, a.dashboard_url)
+    print(text)
+    if a.out:
+        Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.out).write_text(text + "\n", encoding="utf-8")
+    if a.json:
+        Path(a.json).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.json).write_text(digest.dumps(items), encoding="utf-8")
+    return 0
+
+
 def cmd_track_status(a, con) -> int:
     for stream in STREAMS.values():
         for ds in stream.datasets:
@@ -91,6 +106,14 @@ def register(sub) -> None:
     sp.add_argument("--title", default="Пульс города")
     sp.add_argument("--fragment", action="store_true", help="без обёртки html/head/body")
     sp.set_defaults(fn=cmd_track_report, track=True)
+
+    sp = sub.add_parser("track-digest", help="находки дня: аномалии и примечательные события")
+    common(sp)
+    sp.add_argument("--limit", type=int, default=12)
+    sp.add_argument("--out", help="сохранить сводку в текстовый файл")
+    sp.add_argument("--json", help="сохранить находки в JSON")
+    sp.add_argument("--dashboard-url", help="ссылка на дашборд в конце сводки")
+    sp.set_defaults(fn=cmd_track_digest, track=True)
 
     sp = sub.add_parser("track-status", help="состояние журнала")
     common(sp)
