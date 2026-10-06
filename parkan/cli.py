@@ -223,7 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("report", help="HTML-дашборд")
     sp.add_argument("--out", default="data/report.html")
-    sp.add_argument("--title", default="Парковки и нарушения")
+    sp.add_argument("--title", default="Парковки Москвы")
     mart_opts(sp)
     sp.set_defaults(fn=cmd_report)
 
