@@ -207,3 +207,29 @@ def test_digest_flags_mass_removal(con, tmp_path):
     sync_dataset(con, FakeClient({586: rows[:45]}), LIC, tmp_path, observed_at=datetime(2026, 10, 6), min_ratio=0.5)
     items = digest.findings(con, tmp_path, date(2026, 10, 6))
     assert any(f.stream == "data" and "исчезло 5 записей" in f.title for f in items)
+
+
+def test_digest_registry_dedupes(con, tmp_path):
+    from parkan.track import digest
+    from parkan.track.digest import Finding
+    a = Finding("works", "отключение", "t", "d", 0.5, key="works:outage:A")
+    b = Finding("lots", "дешевле района", "t", "d", 0.9, key="lots:cheap:B")
+    reg_path = tmp_path / "state" / "notified.json"
+    assert digest.unsent([a, b], digest.load_registry(reg_path)) == [a, b]
+    digest.mark_sent(reg_path, [a.key], date(2026, 10, 6))
+    assert digest.unsent([a, b], digest.load_registry(reg_path)) == [b]
+    # старые ключи забываются
+    reg = digest.mark_sent(reg_path, [b.key], date(2026, 12, 31), keep_days=30)
+    assert set(reg) == {b.key}
+
+
+def test_finding_keys_are_stable(con, tmp_path):
+    from parkan.track import digest
+    em = [{"global_id": 1, "EmCallRegNum": "E1", "EmCallDate": "05.10.2026", "WorkStartDate": "05.10.2026",
+           "WorkEndDate": "12.10.2026", "EngineeringNetObj": "Тепловая сеть", "LeadOfWork": "ПАО МОЭК",
+           "District": "район Б", "SignOfEmergency": "С отключением абонентов", "IsCrashSignOfEmergency": "Да",
+           "WorkPlaceDescription": "дом 1"}]
+    sync_dataset(con, FakeClient({62461: em}), EM, tmp_path, observed_at=datetime(2026, 10, 6, 7))
+    k1 = [f.key for f in digest.findings(con, tmp_path, date(2026, 10, 6))]
+    k2 = [f.key for f in digest.findings(con, tmp_path, date(2026, 10, 6))]
+    assert k1 == k2 and all(k1) and k1[0].startswith("works:outage:")

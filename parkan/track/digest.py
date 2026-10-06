@@ -26,6 +26,7 @@ class Finding:
     title: str
     detail: str
     score: float        # 0..1, чем больше — тем примечательнее
+    key: str = ""       # постоянный ключ: одна и та же находка в разные дни даёт один ключ
 
 
 def previous_sync(state_dir, dataset_ids) -> datetime | None:
@@ -121,16 +122,17 @@ def lot_findings(con, state_dir, today: date, since: datetime | None) -> list[Fi
                                f"Машино-место на {round((1 - ratio) * 100)} % дешевле медианы района",
                                f"{_addr(address)} ({district}): {_mln(price)} при медиане {_mln(med)}"
                                f"{f'; лотов по адресу: {lots}' if lots > 1 else ''}; заявки до {until_d}",
-                               min(1.0, 0.5 + (1 - ratio))))
+                               min(1.0, 0.5 + (1 - ratio)), key=f"lots:cheap:{address}:{until_d}"))
         elif p05 and m2 is not None and m2 <= p05:
             out.append(Finding("lots", "дёшево за м²", "Новый лот среди 5 % самых дешёвых по цене за м²",
                                f"{_addr(address)} ({district}): {round(m2):,} ₽/м², ".replace(",", " ")
-                               + f"{_mln(price)}; заявки до {until_d}", 0.55))
+                               + f"{_mln(price)}; заявки до {until_d}", 0.55, key=f"lots:cheap:{address}:{until_d}"))
     if cheapest:
         a, d, lots, price, space, until_d = cheapest
         out.append(Finding("lots", "самый дешёвый новый", "Самый дешёвый новый лот",
                            f"{_addr(a)} ({d}): {_mln(price)}"
-                           f"{f', {space:g} м²'.replace('.', ',') if space else ''}; заявки до {until_d}", 0.4))
+                           f"{f', {space:g} м²'.replace('.', ',') if space else ''}; заявки до {until_d}", 0.4,
+                           key=f"lots:cheapest:{a}:{until_d}"))
     # снижение стартовой цены у той же записи (видно только по журналу)
     src = events_source(state_dir, 1461)
     if src and since:
@@ -148,7 +150,8 @@ def lot_findings(con, state_dir, today: date, since: datetime | None) -> list[Fi
         """, [since]).fetchall():
             drop = 1 - new_p / old_p
             out.append(Finding("lots", "снижение цены", f"Стартовая цена снижена на {round(drop * 100)} %",
-                               f"{_addr(addr)} ({district}): {_mln(old_p)} → {_mln(new_p)}", min(1.0, 0.6 + drop)))
+                               f"{_addr(addr)} ({district}): {_mln(old_p)} → {_mln(new_p)}", min(1.0, 0.6 + drop),
+                               key=f"lots:drop:{rid}:{new_p:.0f}"))
     return out
 
 
@@ -171,7 +174,7 @@ def license_findings(con, state_dir, today: date) -> list[Finding]:
         if z >= 3 and value >= 5:
             out.append(Finding("licenses", "всплеск", f"Необычно много {kind} точек за {day:%d.%m}",
                                f"{value} при обычных {_num(statistics.median(hist))} в такой день недели",
-                               min(1.0, 0.4 + z / 10)))
+                               min(1.0, 0.4 + z / 10), key=f"licenses:spike:{col}:{day}"))
     # сети: несколько точек за неделю, заметно больше своего обычного темпа
     for subject, opened7, closed7, opened90, closed90, active in con.execute("""
         SELECT subject,
@@ -186,7 +189,8 @@ def license_findings(con, state_dir, today: date) -> list[Finding]:
             if n7 >= 3 and n7 >= 2 * max(weekly, 1):
                 out.append(Finding("licenses", "сеть", f"{org(subject)}: {verb} {n7} {plural(n7, 'точка', 'точки', 'точек')} за неделю",
                                    f"обычно ~{_num(weekly)} в неделю; сейчас действует: {active}",
-                                   min(1.0, 0.45 + n7 / 40)))
+                                   min(1.0, 0.45 + n7 / 40),
+                                   key=f"licenses:chain:{verb}:{subject}:{today.isocalendar()[0]}-{today.isocalendar()[1]}"))
     return out
 
 
@@ -209,19 +213,20 @@ def works_findings(con, state_dir, today: date) -> list[Finding]:
         out.append(Finding("works", "всплеск аварий", f"Всплеск аварийных работ за {day:%d.%m}",
                            f"{value} {plural(value, 'новый вызов', 'новых вызова', 'новых вызовов')} при обычных "
                            f"{_num(statistics.median(hist))} в такой день недели",
-                           min(1.0, 0.5 + z / 10)))
+                           min(1.0, 0.5 + z / 10), key=f"works:spike:{day}"))
     for district, n, nets in con.execute("""
         SELECT district, count(*), string_agg(DISTINCT net, '; ') FROM em
         WHERE reg_d = ? AND district IS NOT NULL GROUP BY 1 HAVING count(*) >= 4 ORDER BY 2 DESC
     """, [day]).fetchall():
         out.append(Finding("works", "район", f"{district}: {n} {plural(n, 'новая авария', 'новые аварии', 'новых аварий')} за день",
-                           nets or "", min(1.0, 0.35 + n / 20)))
+                           nets or "", min(1.0, 0.35 + n / 20), key=f"works:district:{district}:{day}"))
     for district, net, lead, place, start_d, end_d in con.execute("""
         SELECT district, net, lead, place, strftime(start_d, '%d.%m'), strftime(end_d, '%d.%m') FROM em
         WHERE outage AND reg_d >= ? ORDER BY reg_d DESC LIMIT 10
     """, [day]).fetchall():
         out.append(Finding("works", "отключение", f"Авария с отключением абонентов: {district}",
-                           f"{net}; {_addr(place)}; {start_d}–{end_d}", 0.5))
+                           f"{net}; {_addr(place)}; {start_d}–{end_d}", 0.5,
+                           key=f"works:outage:{district}:{place}:{start_d}"))
     return out
 
 
@@ -244,10 +249,10 @@ def data_findings(con, state_dir, dataset_ids, since: datetime | None) -> list[F
         """, [since] * 3).fetchone()
         if total and removed / total > 0.01:
             out.append(Finding("data", "удаления", f"Набор № {ds}: исчезло {removed} записей ({removed / total:.1%})",
-                               "проверьте, событие это или сбой источника", 0.7))
+                               "проверьте, событие это или сбой источника", 0.7, key=f"data:removed:{ds}:{since:%Y%m%d%H%M}"))
         if total and changed / total > 0.10:
             out.append(Finding("data", "изменения", f"Набор № {ds}: изменено {changed} записей ({changed / total:.1%})",
-                               "массовое обновление у источника", 0.5))
+                               "массовое обновление у источника", 0.5, key=f"data:changed:{ds}:{since:%Y%m%d%H%M}"))
     return out
 
 
@@ -285,3 +290,29 @@ def to_json(items: list[Finding]) -> list[dict]:
 
 def dumps(items) -> str:
     return json.dumps(to_json(items), ensure_ascii=False, indent=1)
+
+
+# ---------------------------------------------------------------- реестр отправленных находок
+
+def load_registry(path) -> dict:
+    """{ключ: дата первой отправки}. Хранится рядом с журналом, чтобы не дублировать находки."""
+    from pathlib import Path
+    p = Path(path)
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+
+def unsent(items: list[Finding], registry: dict) -> list[Finding]:
+    return [f for f in items if f.key not in registry]
+
+
+def mark_sent(path, keys, today: date, keep_days: int = 60) -> dict:
+    """Добавляет ключи в реестр и забывает записи старше keep_days."""
+    from pathlib import Path
+    reg = load_registry(path)
+    for k in keys:
+        reg.setdefault(k, today.isoformat())
+    cutoff = (today - timedelta(days=keep_days)).isoformat()
+    reg = {k: v for k, v in reg.items() if v >= cutoff}
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(reg, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
+    return reg

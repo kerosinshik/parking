@@ -63,7 +63,14 @@ def cmd_track_digest(a, con) -> int:
     from . import digest
     today = now_msk().date()
     items = digest.findings(con, a.state_dir, today, limit=a.limit)
+    already = 0
+    if a.registry:   # только находки, которых ещё не было в реестре отправленных
+        fresh = digest.unsent(items, digest.load_registry(a.registry))
+        already, items = len(items) - len(fresh), fresh
     text = digest.to_markdown(items, today, a.dashboard_url)
+    if already and not items:
+        text = text.replace("Ничего необычного: все потоки в пределах нормы.",
+                            f"Новых находок нет (уже отправлено раньше: {already}).")
     print(text)
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +78,15 @@ def cmd_track_digest(a, con) -> int:
     if a.json:
         Path(a.json).parent.mkdir(parents=True, exist_ok=True)
         Path(a.json).write_text(digest.dumps(items), encoding="utf-8")
+    return 0
+
+
+def cmd_track_mark_sent(a, con) -> int:
+    from . import digest
+    import json as _json
+    keys = [f["key"] for f in _json.loads(Path(a.json).read_text(encoding="utf-8")) if f.get("key")]
+    reg = digest.mark_sent(a.registry, keys, now_msk().date())
+    print(f"Отмечено отправленными: {len(keys)}; в реестре: {len(reg)}")
     return 0
 
 
@@ -113,7 +129,13 @@ def register(sub) -> None:
     sp.add_argument("--out", help="сохранить сводку в текстовый файл")
     sp.add_argument("--json", help="сохранить находки в JSON")
     sp.add_argument("--dashboard-url", help="ссылка на дашборд в конце сводки")
+    sp.add_argument("--registry", help="реестр отправленных находок (JSON): показывать только новые")
     sp.set_defaults(fn=cmd_track_digest, track=True)
+
+    sp = sub.add_parser("track-mark-sent", help="отметить находки из JSON как отправленные")
+    sp.add_argument("--json", required=True, help="файл находок от track-digest --json")
+    sp.add_argument("--registry", required=True)
+    sp.set_defaults(fn=cmd_track_mark_sent, track=True)
 
     sp = sub.add_parser("track-status", help="состояние журнала")
     common(sp)
