@@ -12,7 +12,7 @@ from datetime import date, timedelta
 
 from ..geo import NearestIndex
 from ..report import hour_price
-from .store import current_sql, events_source
+from .store import current_sql, events_source, ever_sql, tracking_start
 
 D = "try_strptime(json_extract_string(payload, '$.{f}'), '%d.%m.%Y')::DATE"
 
@@ -286,7 +286,11 @@ def parking_affected(con, state_dir, parking_con, today: date) -> dict | None:
 
 
 def works(con, state_dir, today: date, parking_con=None) -> dict | None:
-    has_em = _view(con, state_dir, 62461, "em_raw")
+    # № 62461 хранит только незакрытые вызовы: берём и исчезнувшие, иначе прошлые дни выглядят пустыми
+    em_sql = ever_sql(state_dir, 62461)
+    has_em = em_sql is not None
+    if has_em:
+        con.execute(f"CREATE OR REPLACE TEMP VIEW em_raw AS {em_sql}")
     has_ew = _view(con, state_dir, 62501, "ew_raw")
     if not (has_em or has_ew):
         return None
@@ -299,7 +303,7 @@ def works(con, state_dir, today: date, parking_con=None) -> dict | None:
                    {_d('WorkEndDate')} AS end_d, {_j('EngineeringNetObj')} AS net, {_j('LeadOfWork')} AS lead,
                    {_j('District')} AS district, {_j('SignOfEmergency')} = 'С отключением абонентов' AS outage,
                    {_j('IsCrashSignOfEmergency')} = 'Да' AS crash, coalesce(nullif({_j('WorkPlaceDescription')}, ''), {_j('AddressOfNearbyBuilding')}) AS place,
-                   {_j('EmergencyDescription')} AS descr
+                   {_j('EmergencyDescription')} AS descr, gone
             FROM em_raw
         """)
         series = {}
@@ -310,9 +314,11 @@ def works(con, state_dir, today: date, parking_con=None) -> dict | None:
         series["Прочие сети"] = _series(con.execute(f"SELECT reg_d, count(*) FROM em WHERE reg_d >= ? AND {other} "
                                                     "GROUP BY 1", [days[0]]).fetchall(), days)
         out["em_series"] = series
+        since = tracking_start(state_dir, 62461)
+        out["em_since"] = f"{since:%d.%m.%Y}" if since else None
         out["em_tiles"] = dict(zip(("active", "active_outage", "new7", "new30"), con.execute("""
-            SELECT count(*) FILTER (WHERE start_d <= ? AND end_d >= ?),
-                   count(*) FILTER (WHERE start_d <= ? AND end_d >= ? AND outage),
+            SELECT count(*) FILTER (WHERE start_d <= ? AND end_d >= ? AND NOT gone),
+                   count(*) FILTER (WHERE start_d <= ? AND end_d >= ? AND outage AND NOT gone),
                    count(*) FILTER (WHERE reg_d > ?), count(*) FILTER (WHERE reg_d > ?)
             FROM em
         """, [today, today, today, today, today - timedelta(days=7), today - timedelta(days=30)]).fetchone()))
@@ -320,11 +326,11 @@ def works(con, state_dir, today: date, parking_con=None) -> dict | None:
             SELECT lead, count(*) FILTER (WHERE reg_d > ?),
                    avg(outage::INT) FILTER (WHERE reg_d > ?),
                    median(end_d - start_d) FILTER (WHERE reg_d > ?),
-                   count(*) FILTER (WHERE start_d <= ? AND end_d >= ?)
+                   count(*) FILTER (WHERE start_d <= ? AND end_d >= ? AND NOT gone)
             FROM em GROUP BY 1 HAVING count(*) FILTER (WHERE reg_d > ?) > 0 ORDER BY 2 DESC LIMIT 15
         """, [today - timedelta(days=30)] * 3 + [today, today, today - timedelta(days=30)]).fetchall()]
         out["em_districts"] = con.execute("""
-            SELECT district, count(*) FILTER (WHERE start_d <= ? AND end_d >= ?) AS act,
+            SELECT district, count(*) FILTER (WHERE start_d <= ? AND end_d >= ? AND NOT gone) AS act,
                    count(*) FILTER (WHERE reg_d > ?) AS n30
             FROM em WHERE district IS NOT NULL GROUP BY 1 ORDER BY 3 DESC LIMIT 15
         """, [today, today, today - timedelta(days=30)]).fetchall()

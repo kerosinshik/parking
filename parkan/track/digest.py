@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 
 from . import metrics
-from .store import event_files, events_source
+from .store import event_files, events_source, tracking_start
 
 STREAM_TITLES = {"lots": "Машино-места", "licenses": "Общепит и алкоритейл", "works": "Помехи по адресу",
                  "data": "Качество данных"}
@@ -209,17 +209,21 @@ def works_findings(con, state_dir, today: date) -> list[Finding]:
         return []
     out = []
     day = today - timedelta(days=1)
-    start = day - timedelta(days=84)
+    # До начала учёта закрытые вызовы в наборе не видны, поэтому норма — только по дням,
+    # целиком прошедшим после первой синхронизации, и по дням того же типа (будни / выходные)
+    since = tracking_start(state_dir, 62461)
+    start = max(day - timedelta(days=84), since.date() + timedelta(days=1)) if since else day
     counts = dict(con.execute("SELECT reg_d, count(*) FROM em WHERE reg_d BETWEEN ? AND ? GROUP BY 1",
                               [start, day]).fetchall())
-    hist = [counts.get(start + timedelta(days=i), 0) for i in range(84)
-            if (start + timedelta(days=i)).weekday() == day.weekday()]
+    workday = day.weekday() < 5
+    hist = [counts.get(d, 0) for d in (start + timedelta(days=i) for i in range((day - start).days))
+            if (d.weekday() < 5) == workday]
     value = counts.get(day, 0)
     z = _robust_z(value, hist)
     if z >= 3 and value >= 10:
         out.append(Finding("works", "всплеск аварий", f"Всплеск аварийных работ за {day:%d.%m}",
                            f"{value} {plural(value, 'новый вызов', 'новых вызова', 'новых вызовов')} при обычных "
-                           f"{_num(statistics.median(hist))} в такой день недели",
+                           f"{_num(statistics.median(hist))} {'в будний день' if workday else 'в выходной'}",
                            min(1.0, 0.5 + z / 10), key=f"works:spike:{day}"))
     for district, n, nets in con.execute("""
         SELECT district, count(*), string_agg(DISTINCT net, '; ') FROM em

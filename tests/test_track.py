@@ -233,3 +233,31 @@ def test_finding_keys_are_stable(con, tmp_path):
     k1 = [f.key for f in digest.findings(con, tmp_path, date(2026, 10, 6))]
     k2 = [f.key for f in digest.findings(con, tmp_path, date(2026, 10, 6))]
     assert k1 == k2 and all(k1) and k1[0].startswith("works:outage:")
+
+
+def test_closed_calls_kept_and_spike_baseline_after_tracking_start(con, tmp_path):
+    """№ 62461 хранит только незакрытые вызовы: закрытые не должны пропадать из подсчётов,
+    а норма для всплеска строится только по дням после начала учёта."""
+    from parkan.track import digest
+
+    def call(i, day):
+        return {"global_id": 1000 + i, "EmCallRegNum": f"C{i}", "EmCallDate": day, "WorkStartDate": day,
+                "WorkEndDate": day, "EngineeringNetObj": "Водопровод", "LeadOfWork": "АО Мосводоканал",
+                "District": f"район {i % 7}", "SignOfEmergency": "", "IsCrashSignOfEmergency": "Нет"}
+
+    # первый снимок: в прошлом почти ничего (закрытые уже исчезли), за 05.10 — 40 вызовов
+    first = [call(i, "28.09.2026") for i in range(2)] + [call(100 + i, "05.10.2026") for i in range(40)]
+    sync_dataset(con, FakeClient({62461: first}), EM, tmp_path, observed_at=datetime(2026, 10, 5, 23))
+    # на следующий день вызовы 05.10 закрыты и исчезли из набора, пришли 30 новых за 06.10
+    second = [call(200 + i, "06.10.2026") for i in range(30)]
+    sync_dataset(con, FakeClient({62461: second}), EM, tmp_path, observed_at=datetime(2026, 10, 6, 23), min_ratio=0)
+
+    w = metrics.works(con, tmp_path, date(2026, 10, 7))
+    days = w["days"]
+    total = [sum(v[days.index(d)] for v in w["em_series"].values()) for d in ("2026-10-05", "2026-10-06")]
+    assert total == [40, 30]                  # исчезнувшие вызовы 05.10 остались в серии
+    assert w["em_tiles"]["active"] == 0       # но активными не считаются
+    assert w["em_since"] == "05.10.2026"
+
+    kinds = [f.kind for f in digest.works_findings(con, tmp_path, date(2026, 10, 7))]
+    assert "всплеск аварий" not in kinds      # нормы по дням после начала учёта ещё нет

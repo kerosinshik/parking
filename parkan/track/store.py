@@ -57,6 +57,33 @@ def current_sql(state_dir, dataset_id: int, as_of: datetime | None = None) -> st
     """
 
 
+def ever_sql(state_dir, dataset_id: int) -> str | None:
+    """Все записи, когда-либо виденные в наборе: последнее содержимое и признак gone (запись исчезла).
+
+    Нужен для наборов, которые хранят только открытые записи (аварийные вызовы № 62461):
+    по текущему состоянию закрытые вызовы пропадают, и прошлые дни выглядят пустыми.
+    """
+    src = events_source(state_dir, dataset_id)
+    if src is None:
+        return None
+    return f"""
+        SELECT record_id, hash, payload, geometry, first_seen, last_change, gone
+        FROM (
+            SELECT *, min(observed_at) OVER w AS first_seen, max(observed_at) OVER w AS last_change,
+                   arg_max(event, observed_at) OVER w = 'removed' AS gone,
+                   row_number() OVER (PARTITION BY record_id
+                                      ORDER BY (event = 'removed')::INT, observed_at DESC) AS rn
+            FROM {src} WINDOW w AS (PARTITION BY record_id)
+        ) WHERE rn = 1
+    """
+
+
+def tracking_start(state_dir, dataset_id: int) -> datetime | None:
+    """Время первой синхронизации набора (по имени первого файла журнала)."""
+    files = event_files(state_dir, dataset_id)
+    return datetime.strptime(files[0].stem.removeprefix("events-"), "%Y%m%dT%H%M%S") if files else None
+
+
 def write_events(con, state_dir, dataset_id: int, observed_at: datetime, rows) -> Path | None:
     """Пишет события запуска в новый Parquet-файл. Существующие файлы не трогает."""
     rows = list(rows)
