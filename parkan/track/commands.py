@@ -1,4 +1,4 @@
-"""Команды CLI учёта динамических данных: track-sync, track-report, track-status."""
+"""Команды CLI учёта динамических данных: track-sync, track-report, track-digest, track-torgi, track-status."""
 
 from __future__ import annotations
 
@@ -90,6 +90,21 @@ def cmd_track_mark_sent(a, con) -> int:
     return 0
 
 
+def cmd_track_torgi(a, con) -> int:
+    from datetime import timedelta
+    from . import torgi
+    today = now_msk().date()
+    since = today - timedelta(days=a.days)
+    stats = torgi.collect(con, a.state_dir, a.results, today, since, limit=a.limit, pause=a.pause)
+    print(f"Итоги торгов: проверено новых {stats['new']}, перепроверено {stats['rechecked']} "
+          f"(из {stats['candidates']} к проверке), с итоговой ценой {stats['sold']}, ошибок {stats['errors']}; "
+          f"в таблице {stats['total']} лотов: {a.results}")
+    if a.slim_out:
+        n = torgi.export_slim(a.results, a.slim_out, since=today - timedelta(days=a.slim_days) if a.slim_days else None)
+        print(f"Таблица для дашборда торгов: {a.slim_out} ({n} лотов)")
+    return 1 if stats["errors"] and not (stats["new"] or stats["rechecked"]) else 0
+
+
 def cmd_track_status(a, con) -> int:
     for stream in STREAMS.values():
         for ds in stream.datasets:
@@ -136,6 +151,16 @@ def register(sub) -> None:
     sp.add_argument("--json", required=True, help="файл находок от track-digest --json")
     sp.add_argument("--registry", required=True)
     sp.set_defaults(fn=cmd_track_mark_sent, track=True)
+
+    sp = sub.add_parser("track-torgi", help="итоги торгов машино-мест со страниц лотов torgi.mos.ru")
+    common(sp)
+    sp.add_argument("--results", required=True, help="таблица итогов (CSV), дописывается")
+    sp.add_argument("--days", type=int, default=30, help="новые лоты с датой торгов не старше N дней")
+    sp.add_argument("--limit", type=int, default=1000, help="не больше N страниц за запуск")
+    sp.add_argument("--pause", type=float, default=1.0, help="пауза между запросами, с")
+    sp.add_argument("--slim-out", help="компактная таблица для дашборда торгов (CSV)")
+    sp.add_argument("--slim-days", type=int, default=365, help="в компактную таблицу — торги за N дней (0 — все)")
+    sp.set_defaults(fn=cmd_track_torgi, track=True)
 
     sp = sub.add_parser("track-status", help="состояние журнала")
     common(sp)
