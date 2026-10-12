@@ -113,7 +113,8 @@ def torgi_posts(con, today: date, sold: list[dict], policy=POLICY) -> list[Post]
         if gap >= policy["torgi_min_gap"] and (r["address"] not in best or gap > best[r["address"]][0]):
             best[r["address"]] = (gap, r, ref)
     out = []
-    for gap, r, ref in sorted(best.values(), key=lambda x: -x[0]):
+    # сначала сравнение с итогами в том же доме (сопоставимые квартиры), потом с районом; внутри — по разнице
+    for gap, r, ref in sorted(best.values(), key=lambda x: (x[2]["level"] != "дом", -x[0])):
         market.enrich([r], [], today, policy["market_max_age_days"], sold=sold)
         out.append(Post(f"torgi:{r['address']}", "torgi", templates.torgi(r, ref), templates.torgi_card(r, ref),
                         score=gap, facts=facts.torgi(r)))
