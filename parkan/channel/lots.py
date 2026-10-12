@@ -159,11 +159,17 @@ def _f(x) -> float | None:
 
 
 def results(path) -> list[dict]:
-    """Строки таблицы итогов с полем kind; квартиры — только Москва (есть округ)."""
+    """Строки таблиц итогов с полем kind; квартиры — только Москва (есть округ).
+
+    path — файл или несколько через запятую (машино-места Пульса и квартиры канала ведутся в разных таблицах)."""
     if not path:
         return []
+    rows = {}
+    for one in str(path).split(","):
+        if one.strip():
+            rows.update(torgi.load(one.strip()))
     out = []
-    for r in torgi.load(path).values():
+    for r in rows.values():
         kind = BY_TYPE.get(r.get("object_type") or torgi.PARKING)
         if kind is None or (kind != "parking" and not r.get("adm_area")):
             continue

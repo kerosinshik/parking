@@ -185,7 +185,7 @@ def cmd_channel_check(a, con) -> int:
 def register(sub) -> None:
     sp = sub.add_parser("channel-draft", help="черновики постов для Telegram-канала (docs/channel.md)")
     sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (track-sync)")
-    sp.add_argument("--results", help="таблица итогов торгов (track-torgi --results)")
+    sp.add_argument("--results", help="таблицы итогов торгов (track-torgi --results), несколько — через запятую")
     sp.add_argument("--out", default="channel_out", help="куда сложить тексты и карточки (подпапка на дату)")
     sp.add_argument("--channel-state", default=os.environ.get("PARKAN_CHANNEL_STATE", "channel_state"),
                     help="состояние канала: что уже уходило в черновики")

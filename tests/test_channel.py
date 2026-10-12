@@ -105,6 +105,9 @@ def test_lots_compare_parking_by_price_and_flats_by_m2(con, tmp_path):
     drops = lots.price_drops(con, tmp_path, date(2026, 10, 6), 0.1)
     assert [(d["kind"], d["old_price"], d["price"]) for d in drops] == [("parking", 2_000_000, 1_500_000)]
     assert {r["tender_id"] for r in lots.results(results_csv(tmp_path))} == {"1", "2", "3", "4", "11", "12", "13"}
+    extra = tmp_path / "flats.csv"
+    torgi.save(extra, {"21": {"tender_id": "21", "object_type": "квартира", "adm_area": "ЦАО", "status": "Отменены"}})
+    assert "21" in {r["tender_id"] for r in lots.results(f"{results_csv(tmp_path)},{extra}")}
 
 
 def test_drafts_all_rubrics_and_registry(con, tmp_path):
