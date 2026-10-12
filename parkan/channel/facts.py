@@ -37,14 +37,15 @@ def lot(r: dict) -> dict:
                  compared_with=("цена за м² с медианой цены за м² " if r["kind"] == "flat" else "цена лота с медианой цен ")
                  + f"{'округа' if r.get('scope') == 'округа' else 'района'} среди лотов того же типа в продаже",
                  median=t._ref_text(r), lots_at_address=r.get("at_addr") if (r.get("at_addr") or 1) > 1 else None,
-                 applications_until=t.day(r.get("end_d")), trades_date=t.day(r.get("trades_d")), lot_url=r.get("url"))
+                 applications_until=t.day(r.get("end_d")), trades_date=t.day(r.get("trades_d")), lot_url=r.get("url"),
+                 market=r.get("market"))
 
 
 def drop(r: dict) -> dict:
     return _base("drop", r["kind"], address=r["place"], district=t.district(r.get("district")),
                  old_price=t.money(r["old_price"]), new_price=t.money(r["price"]), drop=f"{t.pct(r['drop'])} %",
                  area=t.area(r.get("space")), price_per_m2=_per_m2(r["price"], r.get("space")),
-                 applications_until=t.day(r.get("end_d")), lot_url=r.get("url"))
+                 applications_until=t.day(r.get("end_d")), lot_url=r.get("url"), market=r.get("market"))
 
 
 def house(r: dict) -> dict:
@@ -64,7 +65,8 @@ def _result(rubric: str, r: dict, **extra) -> dict:
                  final_price=t.money(r["final_price"]), area=t.area(r.get("space_m2")),
                  final_price_per_m2=_per_m2(r["final_price"], r.get("space_m2")),
                  trades_date=t.day(r.get("trades_date")), status=r.get("status"),
-                 lot_url=r.get("url"), protocol_url=r.get("auction_protocol_url"), **extra)
+                 lot_url=r.get("url"), protocol_url=r.get("auction_protocol_url"), market=r.get("market"),
+                 **extra)
 
 
 def templates_subway(s: str | None) -> str | None:

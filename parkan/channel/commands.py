@@ -1,4 +1,4 @@
-"""Команды CLI канала: channel-draft, channel-send, channel-lint, channel-check."""
+"""Команды CLI канала: channel-draft, channel-send, channel-lint, channel-check, market-add, market-status."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 from ..timeutil import now_msk
 from ..track import digest
 from ..track.commands import default_state_dir
-from . import content, copy, endings, html_cards
+from . import content, copy, endings, html_cards, lots, market, templates
 from .telegram import Bot
 
 
@@ -25,7 +25,7 @@ def cmd_channel_draft(a, con) -> int:
     registry_path = Path(a.channel_state) / "drafted.json"
     rubrics = tuple(r.strip() for r in a.rubrics.split(",")) if a.rubrics else None
     posts = content.drafts(con, a.state_dir, today, results_path=a.results, rubrics=rubrics,
-                           registry=digest.load_registry(registry_path))
+                           registry=digest.load_registry(registry_path), market_path=a.market)
     out = Path(a.out) / today.isoformat()
     out.mkdir(parents=True, exist_ok=True)
     draw = html_cards.available()
@@ -182,6 +182,45 @@ def cmd_channel_check(a, con) -> int:
     return 0
 
 
+def cmd_market_add(a, con) -> int:
+    """Дописывает наблюдения рыночных цен из CSV в журнал (market.py): проверка, без повторов, только добавление."""
+    today = date.fromisoformat(a.today) if a.today else now_msk().date()
+    rows = market.read_rows(a.file)
+    added, dup, errors = market.add(a.market, rows, today)
+    for e in errors:
+        print(e, file=sys.stderr)
+    if errors:
+        print(f"Ничего не добавлено: ошибок {len(errors)}. Колонки: {', '.join(market.FIELDS[:-1])}", file=sys.stderr)
+        return 1
+    print(f"Добавлено наблюдений: {added}, повторов пропущено: {dup} → {a.market}")
+    return 0
+
+
+def cmd_market_status(a, con) -> int:
+    """Что есть в журнале рынка и по каким районам с квартирами в продаже не хватает свежего ориентира."""
+    today = date.fromisoformat(a.today) if a.today else now_msk().date()
+    obs = market.load(a.market)
+    if not obs:
+        print(f"Журнал рынка пуст: {a.market}. Добавить — parkan market-add --file <csv>")
+    else:
+        print(f"Наблюдений: {len(obs)}, источники: {', '.join(sorted({o['source'] for o in obs}))}")
+        for m, (what, _, _) in market.METRICS.items():
+            ds = [o["observed"] for o in obs if o["metric"] == m and o["observed"]]
+            print(f"  {what}: {len(ds)} строк" + (f", самое свежее — {max(ds)}" if ds else ""))
+    if not lots.load(con, a.state_dir, today):
+        return 0
+    districts = con.execute("SELECT DISTINCT district, adm FROM ch_sale WHERE kind = 'flat' AND district IS NOT NULL "
+                            "ORDER BY district").fetchall()
+    age = content.POLICY["market_max_age_days"]
+    cov = market.coverage(obs, districts, today, age)
+    print(f"Районов с квартирами в продаже: {len(districts)}; свежий (≤ {age} дн.) ориентир по району — "
+          f"{len(cov['район'])}, по округу — {len(cov['округ'])}, по Москве — {len(cov['город'])}, нет — {len(cov['нет'])}")
+    need = cov["нет"] + cov["округ"] + cov["город"]
+    if need:
+        print("Собрать по районам: " + ", ".join(templates.district(d) for d in need))
+    return 0
+
+
 def register(sub) -> None:
     sp = sub.add_parser("channel-draft", help="черновики постов для Telegram-канала (docs/channel.md)")
     sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (track-sync)")
@@ -194,6 +233,8 @@ def register(sub) -> None:
     sp.add_argument("--send", action="store_true", help="сразу отправить в кухню (без написанных текстов — шаблонные)")
     sp.add_argument("--chat", help="чат для черновиков (иначе TELEGRAM_DRAFT_CHAT)")
     sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней (для проверки)")
+    sp.add_argument("--market", default=os.environ.get("PARKAN_MARKET", market.DEFAULT_PATH),
+                    help="журнал рыночных цен (market-add); нет файла — без сравнения с рынком")
     sp.set_defaults(fn=cmd_channel_draft, track=True)
 
     for name, fn, hlp in (("channel-send", cmd_channel_send, "отправить черновики папки дня в кухню (тексты .txt, иначе шаблон)"),
@@ -210,3 +251,15 @@ def register(sub) -> None:
     sp.add_argument("--chat", help="чат для черновиков (иначе TELEGRAM_DRAFT_CHAT)")
     sp.add_argument("--ping", action="store_true", help="отправить в кухню тестовое сообщение")
     sp.set_defaults(fn=cmd_channel_check, track=True)
+
+    sp = sub.add_parser("market-add", help="дописать рыночные цены из CSV в журнал рынка (docs/channel.md)")
+    sp.add_argument("--file", required=True, help="CSV с колонками " + ", ".join(market.FIELDS[:-1]))
+    sp.add_argument("--market", default=os.environ.get("PARKAN_MARKET", market.DEFAULT_PATH), help="журнал рынка")
+    sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней")
+    sp.set_defaults(fn=cmd_market_add, track=True)
+
+    sp = sub.add_parser("market-status", help="что есть в журнале рынка и каких районов не хватает")
+    sp.add_argument("--market", default=os.environ.get("PARKAN_MARKET", market.DEFAULT_PATH), help="журнал рынка")
+    sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (квартиры в продаже)")
+    sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней")
+    sp.set_defaults(fn=cmd_market_status, track=True)

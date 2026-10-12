@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from ..track import digest
-from . import facts, lots, templates
+from . import facts, lots, market, templates
 
 # Редакционная политика канала. Отдельно от порогов сводки Trello: их можно менять независимо.
 POLICY = {
@@ -37,6 +37,7 @@ POLICY = {
     "week_weekday": 0,          # понедельник
     "weekstats_weekday": 4,     # пятница
     "weekstats_min": 3,         # итогов за неделю по типу, чтобы был пост
+    "market_max_age_days": 60,  # рыночный ориентир старше — не показываем (журнал market-add)
 }
 RUBRICS = ("lot", "drop", "house", "sold", "nofight", "week", "weekstats")
 
@@ -66,14 +67,18 @@ def _mix(items: list, n: int) -> list:
     return out
 
 
-def lot_posts(con, state_dir, today, policy=POLICY) -> list[Post]:
+def lot_posts(con, state_dir, today, policy=POLICY, obs=()) -> list[Post]:
+    rows = lots.new_deals(con, state_dir, today, policy["lot_min_discount"])
+    market.enrich(rows, obs, today, policy["market_max_age_days"])
     return [Post(f"lot:{r['kind']}:{r['address']}:{r['end_d']}", "lot", templates.lot(r), templates.lot_card(r),
-                 score=r["discount"], facts=facts.lot(r)) for r in lots.new_deals(con, state_dir, today, policy["lot_min_discount"])]
+                 score=r["discount"], facts=facts.lot(r)) for r in rows]
 
 
-def drop_posts(con, state_dir, today, policy=POLICY) -> list[Post]:
+def drop_posts(con, state_dir, today, policy=POLICY, obs=()) -> list[Post]:
+    rows = lots.price_drops(con, state_dir, today, policy["drop_min"])
+    market.enrich(rows, obs, today, policy["market_max_age_days"])
     return [Post(f"drop:{r['record_id']}:{r['price']:.0f}", "drop", templates.drop(r), templates.drop_card(r),
-                 score=r["drop"], facts=facts.drop(r)) for r in lots.price_drops(con, state_dir, today, policy["drop_min"])]
+                 score=r["drop"], facts=facts.drop(r)) for r in rows]
 
 
 def house_posts(con, state_dir, today, policy=POLICY) -> list[Post]:
@@ -158,12 +163,17 @@ def default_rubrics(today: date, policy=POLICY) -> tuple[str, ...]:
 
 
 def drafts(con, state_dir, today: date, *, results_path=None, rubrics=None, registry=None,
-           policy=POLICY) -> list[Post]:
-    """Черновики на сегодня без тех, что уже уходили (registry — {ключ: дата})."""
+           policy=POLICY, market_path=None) -> list[Post]:
+    """Черновики на сегодня без тех, что уже уходили (registry — {ключ: дата}).
+
+    market_path — журнал рыночных цен (market.py): квартиры получают в фактах сравнение с рынком."""
     rubrics = rubrics or default_rubrics(today, policy)
     registry = registry or {}
     have_lots = lots.load(con, state_dir, today)
     results = lots.results(results_path)
+    obs = market.load(market_path)
+    market.enrich(results, obs, today, policy["market_max_age_days"], price="final_price", space="space_m2",
+                  adm="adm_area")
     fresh = lambda posts: digest.unsent(posts, registry)   # noqa: E731
     out = []
     if have_lots and "week" in rubrics:
@@ -171,12 +181,12 @@ def drafts(con, state_dir, today: date, *, results_path=None, rubrics=None, regi
     if "weekstats" in rubrics:
         out += fresh(weekstats_posts(results, today, policy))
     if have_lots and "lot" in rubrics:
-        posts = fresh(lot_posts(con, state_dir, today, policy))
+        posts = fresh(lot_posts(con, state_dir, today, policy, obs))
         out += _mix_posts(posts, policy["lots_per_day"])
     if have_lots and "house" in rubrics:
         out += fresh(house_posts(con, state_dir, today, policy))[:policy["houses_per_day"]]
     if have_lots and "drop" in rubrics:
-        out += _mix_posts(fresh(drop_posts(con, state_dir, today, policy)), policy["drops_per_day"])
+        out += _mix_posts(fresh(drop_posts(con, state_dir, today, policy, obs)), policy["drops_per_day"])
     if "sold" in rubrics:
         out += _mix_posts(fresh(sold_posts(results, today, policy)), policy["sold_per_day"])
     if "nofight" in rubrics:

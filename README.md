@@ -223,6 +223,8 @@ parkan track-torgi --state-dir state --results results/torgi-mashinomesta.csv --
 pip install -e '.[channel]'
 parkan channel-draft --results results/torgi-mashinomesta.csv            # просмотр: channel_out/<дата>/
 parkan channel-draft --results results/torgi-mashinomesta.csv --send     # в кухню (TELEGRAM_BOT_TOKEN, TELEGRAM_DRAFT_CHAT)
+parkan market-add --file new.csv            # рыночные цены по районам → market/observations.csv
+parkan market-status                        # каких районов не хватает для сравнения квартир с рынком
 ```
 
 Стратегия, архитектура, настройка и текущее состояние — [docs/channel.md](docs/channel.md).
