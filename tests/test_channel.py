@@ -155,3 +155,24 @@ def test_cli_channel_draft_sends_and_remembers(con, tmp_path, monkeypatch):
     assert set(json.loads((tmp_path / "ch" / "drafted.json").read_text())) == {m["key"] for m in manifest}
     t.calls.clear()
     assert main(args) == 0 and t.calls == []          # повторный запуск не шлёт то же самое
+
+
+def test_html_card_map_and_district_line():
+    from parkan.channel import html_cards as h
+    assert h.district_line("Бескудниковский район") == "Бескудниковский район · САО"
+    assert h.district_line("район Хамовники") == "район Хамовники · ЦАО"
+    assert h.district_line("район Нигде") == "район Нигде"           # не нашли — как есть, без округа
+    svg = h.map_svg("район Северное Измайлово")
+    assert svg.count("<path") > 100 and h.LIME in svg
+    html = h.lot_html({"kicker": "ЛОТ ДНЯ", "headline": "−44%", "address": "ул. <А>", "district": "Хамовники"})
+    assert "ул. &lt;А&gt;" in html and "район Хамовники · ЦАО" in html
+
+
+@pytest.mark.skipif(not __import__("parkan.channel.html_cards", fromlist=["x"]).available(), reason="нет Chromium")
+def test_html_card_renders(tmp_path):
+    from PIL import Image
+    from parkan.channel import html_cards as h
+    out = h.render_html(h.lot_html({"kicker": "ЛОТ ДНЯ", "headline": "−44%", "price": "1,29 млн ₽",
+                                    "district": "Бескудниковский район"}), tmp_path / "c.png")
+    im = Image.open(out)
+    assert im.size == (1080, 1080) and im.getpixel((5, 5)) == (14, 59, 46)   # фон #0E3B2E
