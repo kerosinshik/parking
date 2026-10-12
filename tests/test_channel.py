@@ -274,3 +274,11 @@ def test_channel_send_uses_written_text_and_falls_back(con, tmp_path, monkeypatc
     t.calls.clear()
     assert main(["channel-send", *base]) == 0 and t.calls == []      # уже отправленное не повторяется
     assert set(json.loads((tmp_path / "ch" / "drafted.json").read_text())) == {m["key"] for m in manifest}
+
+
+def test_signature_link(monkeypatch):
+    from parkan.channel.commands import with_signature
+    monkeypatch.delenv("PARKAN_CHANNEL_URL", raising=False)
+    assert with_signature("Текст") == "Текст"
+    monkeypatch.setenv("PARKAN_CHANNEL_URL", "https://t.me/poputny_metr")
+    assert with_signature("Текст").endswith('\n\n<a href="https://t.me/poputny_metr">Попутный Метр</a>')

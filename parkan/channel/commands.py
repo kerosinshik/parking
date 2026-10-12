@@ -52,6 +52,17 @@ def cmd_channel_draft(a, con) -> int:
     return 0
 
 
+def with_signature(text: str) -> str:
+    """Подпись-ссылка на канал в конце поста (PARKAN_CHANNEL_URL): в канале она не мешает, а при пересылке
+    поста в чат или другой канал ведёт читателя к нам. Ставит код, не автор текста, — одинаково везде."""
+    url = os.environ.get("PARKAN_CHANNEL_URL", "").strip()
+    if not url or url in text:
+        return text
+    from html import escape
+    from .templates import channel_name
+    return f'{text}\n\n<a href="{escape(url, quote=True)}">{escape(channel_name())}</a>'
+
+
 def _text_for(day: Path, m: dict) -> tuple[str, str]:
     """Текст поста: написанный (.txt), если прошёл проверку, иначе шаблонный. Второе — откуда он."""
     copy_path = day / m["copy"]
@@ -78,6 +89,7 @@ def send_dir(day: Path, registry_path: Path, chat: str | None, today: date) -> i
         if m.get("sent"):
             continue
         text, source = _text_for(day, m)
+        text = with_signature(text)
         try:
             bot.send_post(chat, text, day / m["card"] if m.get("card") else None)
         except Exception as e:   # один черновик не должен срывать остальные
