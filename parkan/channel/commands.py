@@ -1,4 +1,4 @@
-"""Команды CLI канала: channel-draft, channel-send, channel-lint, channel-check, market-add, market-status."""
+"""Команды CLI канала: channel-draft, channel-send, channel-lint, channel-check, market-add, market-status, market-page."""
 
 from __future__ import annotations
 
@@ -221,6 +221,15 @@ def cmd_market_status(a, con) -> int:
     return 0
 
 
+def cmd_market_page(a, con) -> int:
+    """Отдельная страница «Рынок квартир»: журнал рынка, квартиры в продаже и итоги торгов на его фоне."""
+    from .market_page import render
+    today = date.fromisoformat(a.today) if a.today else now_msk().date()
+    out = render(con, a.state_dir, a.out, today=today, market_path=a.market, results_path=a.results)
+    print(f"Страница рынка: {out}")
+    return 0
+
+
 def register(sub) -> None:
     sp = sub.add_parser("channel-draft", help="черновики постов для Telegram-канала (docs/channel.md)")
     sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (track-sync)")
@@ -263,3 +272,11 @@ def register(sub) -> None:
     sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (квартиры в продаже)")
     sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней")
     sp.set_defaults(fn=cmd_market_status, track=True)
+
+    sp = sub.add_parser("market-page", help="страница «Рынок квартир»: журнал рынка и квартиры на торгах на его фоне")
+    sp.add_argument("--market", default=os.environ.get("PARKAN_MARKET", market.DEFAULT_PATH), help="журнал рынка")
+    sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (квартиры в продаже)")
+    sp.add_argument("--results", help="таблицы итогов торгов квартир (track-torgi --types квартира), через запятую")
+    sp.add_argument("--out", default="data/market.html")
+    sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней")
+    sp.set_defaults(fn=cmd_market_page, track=True)

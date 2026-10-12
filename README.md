@@ -225,6 +225,7 @@ parkan channel-draft --results results/torgi-mashinomesta.csv            # пр�
 parkan channel-draft --results results/torgi-mashinomesta.csv --send     # в кухню (TELEGRAM_BOT_TOKEN, TELEGRAM_DRAFT_CHAT)
 parkan market-add --file new.csv            # рыночные цены по районам → market/observations.csv
 parkan market-status                        # каких районов не хватает для сравнения квартир с рынком
+parkan market-page --out data/market.html   # страница «Рынок квартир»: журнал рынка и квартиры на торгах
 ```
 
 Стратегия, архитектура, настройка и текущее состояние — [docs/channel.md](docs/channel.md).

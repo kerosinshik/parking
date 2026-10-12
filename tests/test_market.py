@@ -111,3 +111,27 @@ def test_cli_market_add_and_status(tmp_path, capsys):
     assert "Добавлено наблюдений: 1" in out and "ориентир по району — 1" in out and "нет — 0" in out
     bad = obs_csv(tmp_path, "2026-09-30,район,Хамовники,вторичка,все,sale_m2,abc,irn.ru,,,\n", "bad.csv")
     assert main(["market-add", "--file", str(bad), "--market", str(log), "--today", "2026-10-06"]) == 1
+
+
+def test_market_page(tmp_path):
+    import json
+    import re
+    from parkan.cli import main
+    con = duckdb.connect(":memory:")
+    journal(con, tmp_path / "state")
+    con.close()
+    out = tmp_path / "market.html"
+    args = ["market-page", "--state-dir", str(tmp_path / "state"), "--market", str(tmp_path / "none.csv"),
+            "--out", str(out), "--today", "2026-10-06"]
+    assert main(args) == 0                                           # без журнала рынка страница строится
+    data = json.loads(re.search(r"const D = (.*?);\n", out.read_text(encoding="utf-8")).group(1))
+    assert data["journal"] == [] and len(data["flats"]) == 12 and data["coverage"]["нет"] == 1
+    log = tmp_path / "obs.csv"
+    market.add(log, market.read_rows(obs_csv(tmp_path,
+        "2026-09-30,район,Хамовники,вторичка,все,sale_m2,500000,irn.ru,,,\n"
+        "2026-09-30,округ,ЦАО,вторичка,все,sale_m2,550000,irn.ru,,,\n")), TODAY)
+    assert main(args[:4] + [str(log)] + args[5:]) == 0
+    data = json.loads(re.search(r"const D = (.*?);\n", out.read_text(encoding="utf-8")).group(1))
+    assert data["coverage"] == {"район": 1, "округ": 0, "город": 0, "нет": 0}
+    cheap = next(f for f in data["flats"] if f["place"] == "ул. Квартирная, 2")
+    assert cheap["gap"] == pytest.approx(0.4) and data["okrugs"][0]["market"]["value"] == 550000
