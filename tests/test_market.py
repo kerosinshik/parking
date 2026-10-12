@@ -200,3 +200,27 @@ def test_rosstat_parse_and_city_background(tmp_path):
     f = {"facts": {"market": r["market"]}}
     assert any("по Москве без источника" in p for p in copy.check("В Москве — 391 067 ₽ за метр.", f, with_card=False))
     assert copy.check("По данным Росстата, в Москве — 391 067 ₽ за метр.", f, with_card=False) == []
+
+
+def test_torgi_reference_excludes_self_and_falls_back():
+    def row(i, district, m2, d="2026-09-01", adm="Центральный административный округ"):
+        return {"kind": "flat", "tender_id": str(i), "final_price": m2 * 50, "space_m2": 50, "district": district,
+                "adm_area": adm, "trades_date": d}
+    results = [row(i, "район Хамовники", 400_000 + i * 10_000) for i in range(6)]
+    results += [row(10, "Басманный район", 300_000), row(11, "район Хамовники", 999_999, d="2026-05-01"),   # вне окна
+                {"kind": "parking", "tender_id": "12", "final_price": 1, "space_m2": 13, "trades_date": "2026-09-01"}]
+    sold = market.torgi_sold(results, TODAY)
+    assert len(sold) == 7
+    ref = market.torgi_reference(sold, "район Хамовники", "Центральный административный округ")
+    assert ref["level"] == "район" and ref["n"] == 6 and ref["value"] == 425_000
+    ref = market.torgi_reference(sold, "район Хамовники", "ЦАО", exclude="0")   # без самого лота — 5, ещё район
+    assert ref["level"] == "район" and ref["n"] == 5
+    ref = market.torgi_reference(sold, "Басманный район", "Центральный административный округ")
+    assert ref["level"] == "округ" and ref["n"] == 7                           # в Басманном одна продажа — округ
+    f = market.torgi_facts(market.torgi_reference(sold, "район Хамовники", "ЦАО"), 17_000_000, 50)
+    assert f["below_torgi"] == "20 %" and f["torgi_difference"] == "4,25 млн ₽" and f["torgi_deals"] == "6 квартир"
+    assert "районе Хамовники" in f["torgi_what"] and f["torgi_period"] == "1 сентября"
+    assert "above_torgi" in market.torgi_facts(market.torgi_reference(sold, "район Хамовники", "ЦАО"), 25_000_000, 50)
+    r = {"kind": "flat", "price": 17_000_000, "space": 50, "district": "район Хамовники", "adm": "ЦАО"}
+    market.enrich([r], [], TODAY, content.POLICY["market_max_age_days"], sold=sold)   # без журнала рынка тоже работает
+    assert r["market"]["below_torgi"] == "20 %"
