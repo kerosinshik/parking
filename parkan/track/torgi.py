@@ -32,8 +32,9 @@ FIELDS = [
     "start_price", "start_price_per_m2", "deposit", "auction_step", "procedure_form", "price_kind", "trades_form",
     "status", "final_price", "final_price_per_m2", "final_to_start",
     "apps_from", "apps_to", "trades_at", "results_at", "url", "torgi_gov_url", "auction_protocol_url",
-    "checked_at",
+    "checked_at", "object_type",
 ]
+PARKING = "машино-место"
 
 SOLD = ("Признаны состоявшимися", "Единственный участник")
 FINAL = SOLD + ("Признаны несостоявшимися", "Отменены")   # дальше статус не меняется
@@ -136,8 +137,9 @@ def save(path, rows: dict[str, dict]) -> None:
 
 
 def candidates(con, state_dir, known: dict[str, dict], today: date, since: date,
-               recheck_days: int = 60) -> list[dict]:
-    """Лоты машино-мест с прошедшей датой торгов, по которым итога ещё нет в таблице.
+               recheck_days: int = 60, types: tuple[str, ...] = (PARKING,)) -> list[dict]:
+    """Лоты (по умолчанию машино-места; types — типы ObjectType) с прошедшей датой торгов,
+    по которым итога ещё нет в таблице. Квартиры и прочее — только на территории Москвы.
 
     Новые — снятые с публикации лоты с датой торгов от since до вчера. Перепроверяются лоты
     с неокончательным статусом (приём заявок завершён, «состоялись» без цены) не старше recheck_days.
@@ -154,13 +156,16 @@ def candidates(con, state_dir, known: dict[str, dict], today: date, since: date,
                json_extract_string(payload, '$.Coordinates') AS coords,
                try_cast(json_extract_string(payload, '$.Space') AS DOUBLE) AS space,
                try_cast(json_extract_string(payload, '$.StartPrice') AS DOUBLE) AS start_price,
-               json_extract_string(payload, '$.TradesForm') AS trades_form
+               json_extract_string(payload, '$.TradesForm') AS trades_form,
+               json_extract_string(payload, '$.ObjectType') AS object_type
         FROM ({sql})
-        WHERE json_extract_string(payload, '$.ObjectType') = 'машино-место'
+        WHERE list_contains(?, json_extract_string(payload, '$.ObjectType'))
+          AND (json_extract_string(payload, '$.ObjectType') = 'машино-место'
+               OR json_extract_string(payload, '$.OnTerritoryOfMoscow') = 'да')
           AND json_extract_string(payload, '$.Stage') = 'снято с публикации'
-    """).fetchall()
+    """, [list(types)]).fetchall()
     cols = ["tender_id", "trades_date", "adm_area", "district", "address", "coords", "space_m2", "start_price",
-            "trades_form"]
+            "trades_form", "object_type"]
     out = []
     for r in rows:
         lot = dict(zip(cols, r))
@@ -197,6 +202,7 @@ def to_row(lot: dict, info: dict | None, checked_at: datetime) -> dict:
         final_price_per_m2=round(fin / space) if fin and space else None,
         final_to_start=round(fin / start, 3) if fin and start else None,
         url=LOT_URL.format(lot["tender_id"]), checked_at=f"{checked_at:%Y-%m-%d %H:%M}",
+        object_type=lot.get("object_type") or PARKING,
     )
     return row
 
@@ -221,10 +227,10 @@ def fetch_info(tid: str, transport=page_transport, retries: int = 1, sleep=time.
 
 
 def collect(con, state_dir, results_path, today: date, since: date, *, limit: int = 1000, pause: float = 1.0,
-            transport=page_transport, sleep=time.sleep, now=None, log=print) -> dict:
+            transport=page_transport, sleep=time.sleep, now=None, log=print, types: tuple[str, ...] = (PARKING,)) -> dict:
     """Дописывает итоги в таблицу. Возвращает счётчики запуска."""
     known = load(results_path)
-    todo = candidates(con, state_dir, known, today, since)[:limit]
+    todo = candidates(con, state_dir, known, today, since, types=types)[:limit]
     stats = {"candidates": len(todo), "new": 0, "rechecked": 0, "sold": 0, "errors": 0}
     checked_at = now or datetime.now()
     for i, lot in enumerate(todo, 1):
@@ -278,6 +284,8 @@ def export_slim(results_path, out_path, since: date | None = None) -> int:
         w.writeheader()
         for r in sorted(rows, key=lambda r: (r.get("trades_date") or "", r["tender_id"]), reverse=True):
             if since and (r.get("trades_date") or "") < since.isoformat():
+                continue
+            if (r.get("object_type") or PARKING) != PARKING:   # дашборд торгов — только машино-места
                 continue
             subway = re.sub(r";.*$", "", r.get("subway") or "").replace(" (None мин пешком, None км)", "")
             w.writerow({

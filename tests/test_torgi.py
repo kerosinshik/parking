@@ -72,8 +72,9 @@ def test_parse_page_without_data_fails_clearly():
         torgi.parse_page("<html>404</html>")
 
 
-def lot_event(tid, trades, stage="снято с публикации", kind="машино-место"):
+def lot_event(tid, trades, stage="снято с публикации", kind="машино-место", moscow="да"):
     payload = {"ID": tid, "ObjectType": kind, "Stage": stage, "TradesDate": trades, "AdmArea": "Северный административный округ",
+               "OnTerritoryOfMoscow": moscow,
                "District": "Савёловский район", "Address": "Российская Федерация, город Москва, внутригородская "
                "территория муниципальный округ Савёловский, Башиловская улица, дом 23б",
                "Space": "13.2", "StartPrice": "383000", "Coordinates": "55.80,37.57",
@@ -91,6 +92,7 @@ def state(tmp_path):
         lot_event(4, "06.10.2026"),                      # итог ещё не опубликован — перепроверить
         lot_event(5, "08.10.2026", kind="квартира"),     # не машино-место
         lot_event(6, "01.01.2026"),                      # старше окна --days
+        lot_event(7, "08.10.2026", kind="квартира", moscow="нет"),   # квартира в Подмосковье
     ])
     yield con, tmp_path
     con.close()
@@ -152,3 +154,19 @@ def test_export_slim_shortens_fields(state, tmp_path):
     assert r["house"] == "Башиловская улица, дом 23б"
     assert r["subway"] == "Савёловская (9 мин пешком, 0.7 км)"
     assert r["final_price"] == "727700"
+
+
+def test_collect_flats_when_asked_and_slim_keeps_parking_only(state):
+    con, tmp = state
+    results = tmp / "results.csv"
+    seen = []
+
+    def transport(url):
+        seen.append(url.rsplit("/", 1)[1])
+        return 200, page()
+    torgi.collect(con, tmp / "state", results, date(2026, 10, 9), date(2026, 9, 9), pause=0, transport=transport,
+                  sleep=lambda s: None, log=lambda *a: None, types=("машино-место", "квартира"))
+    assert "5" in seen and "7" not in seen                 # квартира Москвы — да, Подмосковья — нет
+    rows = torgi.load(results)
+    assert rows["5"]["object_type"] == "квартира" and rows["1"]["object_type"] == "машино-место"
+    assert torgi.export_slim(results, tmp / "slim.csv") == 3   # в дашборд торгов квартиры не попадают
