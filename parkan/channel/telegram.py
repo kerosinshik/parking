@@ -46,7 +46,11 @@ class Bot:
         self.token, self.transport, self.sleep = token, transport or urllib_transport, sleep
 
     def call(self, method: str, fields: dict, files: dict | None = None) -> dict:
-        body, ctype = _multipart({k: v for k, v in fields.items() if v is not None}, files or {})
+        fields = {k: v for k, v in fields.items() if v is not None}
+        if fields or files:
+            body, ctype = _multipart(fields, files or {})
+        else:   # пустой multipart Telegram отвергает (400), а методам без параметров он и не нужен
+            body, ctype = b"", "application/x-www-form-urlencoded"
         for attempt in range(3):
             status, raw = self.transport(API.format(token=self.token, method=method), body, ctype)
             data = json.loads(raw.decode("utf-8") or "{}")

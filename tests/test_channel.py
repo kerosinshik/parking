@@ -117,6 +117,10 @@ def test_bot_caption_split_and_retry(tmp_path):
     bot.send_post("@kitchen", "x" * 2000, png)
     assert [c[0] for c in t.calls] == ["sendPhoto", "sendMessage"]
 
+    t = FakeTransport()
+    telegram.Bot("T", transport=t).call("getMe", {})
+    assert t.calls == [("getMe", b"")]                 # без параметров — пустое тело, не пустой multipart
+
     t = FakeTransport([(429, b'{"ok": false, "parameters": {"retry_after": 1}}')])
     telegram.Bot("T", transport=t, sleep=lambda s: None).send_post("@kitchen", "текст")
     assert [c[0] for c in t.calls] == ["sendMessage", "sendMessage"]

@@ -1,4 +1,4 @@
-"""Команды CLI канала: channel-draft."""
+"""Команды CLI канала: channel-draft, channel-check."""
 
 from __future__ import annotations
 
@@ -56,6 +56,34 @@ def cmd_channel_draft(a, con) -> int:
     return 0
 
 
+def cmd_channel_check(a, con) -> int:
+    """Проверка настройки: токен, доступ бота к кухне, права на публикацию."""
+    chat = a.chat or os.environ.get("TELEGRAM_DRAFT_CHAT")
+    bot = Bot(os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+    me = bot.call("getMe", {})
+    print(f"Бот: @{me['username']}")
+    if not chat:
+        print("Не задан чат для черновиков: --chat или TELEGRAM_DRAFT_CHAT", file=sys.stderr)
+        return 1
+    try:
+        info = bot.call("getChat", {"chat_id": chat})
+    except Exception as e:
+        print(f"Чат {chat} недоступен боту: {e}\n"
+              "Добавьте бота в кухню администратором с правом публиковать сообщения и проверьте id "
+              "(у каналов он вида -100…).", file=sys.stderr)
+        return 1
+    member = bot.call("getChatMember", {"chat_id": chat, "user_id": me["id"]})
+    can_post = member.get("status") == "administrator" and member.get("can_post_messages", True)
+    print(f"Кухня: «{info.get('title')}» ({info.get('type')}); бот — {member.get('status')}"
+          f"{'' if can_post else ', публиковать не может'}")
+    if not can_post:
+        return 1
+    if a.ping:
+        bot.call("sendMessage", {"chat_id": chat, "text": "Проверка связи: бот «Попутного Метра» на месте."})
+        print("Тестовое сообщение отправлено.")
+    return 0
+
+
 def register(sub) -> None:
     sp = sub.add_parser("channel-draft", help="черновики постов для Telegram-канала (docs/channel.md)")
     sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (track-sync)")
@@ -68,3 +96,8 @@ def register(sub) -> None:
     sp.add_argument("--chat", help="чат для черновиков (иначе TELEGRAM_DRAFT_CHAT)")
     sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней (для проверки)")
     sp.set_defaults(fn=cmd_channel_draft, track=True)
+
+    sp = sub.add_parser("channel-check", help="проверить бота и доступ к кухне")
+    sp.add_argument("--chat", help="чат для черновиков (иначе TELEGRAM_DRAFT_CHAT)")
+    sp.add_argument("--ping", action="store_true", help="отправить в кухню тестовое сообщение")
+    sp.set_defaults(fn=cmd_channel_check, track=True)
