@@ -95,7 +95,8 @@ def cmd_track_torgi(a, con) -> int:
     from . import torgi
     today = now_msk().date()
     since = today - timedelta(days=a.days)
-    stats = torgi.collect(con, a.state_dir, a.results, today, since, limit=a.limit, pause=a.pause)
+    types = tuple(t.strip() for t in a.types.split(",") if t.strip())
+    stats = torgi.collect(con, a.state_dir, a.results, today, since, limit=a.limit, pause=a.pause, types=types)
     print(f"Итоги торгов: проверено новых {stats['new']}, перепроверено {stats['rechecked']} "
           f"(из {stats['candidates']} к проверке), с итоговой ценой {stats['sold']}, ошибок {stats['errors']}; "
           f"в таблице {stats['total']} лотов: {a.results}")
@@ -152,7 +153,7 @@ def register(sub) -> None:
     sp.add_argument("--registry", required=True)
     sp.set_defaults(fn=cmd_track_mark_sent, track=True)
 
-    sp = sub.add_parser("track-torgi", help="итоги торгов машино-мест со страниц лотов torgi.mos.ru")
+    sp = sub.add_parser("track-torgi", help="итоги торгов (машино-места, по --types и квартиры) со страниц лотов torgi.mos.ru")
     common(sp)
     sp.add_argument("--results", required=True, help="таблица итогов (CSV), дописывается")
     sp.add_argument("--days", type=int, default=30, help="новые лоты с датой торгов не старше N дней")
@@ -160,6 +161,8 @@ def register(sub) -> None:
     sp.add_argument("--pause", type=float, default=1.0, help="пауза между запросами, с")
     sp.add_argument("--slim-out", help="компактная таблица для дашборда торгов (CSV)")
     sp.add_argument("--slim-days", type=int, default=365, help="в компактную таблицу — торги за N дней (0 — все)")
+    sp.add_argument("--types", default="машино-место",
+                    help="типы объектов через запятую, например «машино-место,квартира» (квартиры — только Москва)")
     sp.set_defaults(fn=cmd_track_torgi, track=True)
 
     sp = sub.add_parser("track-status", help="состояние журнала")

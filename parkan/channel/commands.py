@@ -11,7 +11,7 @@ from pathlib import Path
 from ..timeutil import now_msk
 from ..track import digest
 from ..track.commands import default_state_dir
-from . import cards, content, templates
+from . import content, html_cards
 from .telegram import Bot
 
 
@@ -23,14 +23,19 @@ def cmd_channel_draft(a, con) -> int:
                            registry=digest.load_registry(registry_path))
     out = Path(a.out) / today.isoformat()
     out.mkdir(parents=True, exist_ok=True)
-    draw = cards.available()
+    draw = html_cards.available()
     if not draw and any(p.card for p in posts):
-        print("Карточки не рисуются: нужен Pillow и шрифт с кириллицей (см. parkan/channel/cards.py)", file=sys.stderr)
+        print("Карточки не рисуются: нет Chromium (PARKAN_CHROME), черновики уйдут текстом", file=sys.stderr)
     manifest = []
     for i, p in enumerate(posts, 1):
         stem = f"{i:02d}-{p.rubric}"
         (out / f"{stem}.html").write_text(p.text + "\n", encoding="utf-8")
-        card = cards.render(p.card, out / f"{stem}.png", templates.channel_name()) if p.card and draw else None
+        card = None
+        if p.card and draw:
+            try:
+                card = html_cards.render(p.card, out / f"{stem}.png")
+            except Exception as e:   # без карточки черновик всё равно полезен
+                print(f"  {p.key}: карточка не нарисовалась: {e}", file=sys.stderr)
         manifest.append({"key": p.key, "rubric": p.rubric, "text": f"{stem}.html", "card": card.name if card else None})
         p.card_path = card
     (out / "drafts.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -91,7 +96,8 @@ def register(sub) -> None:
     sp.add_argument("--out", default="channel_out", help="куда сложить тексты и карточки (подпапка на дату)")
     sp.add_argument("--channel-state", default=os.environ.get("PARKAN_CHANNEL_STATE", "channel_state"),
                     help="состояние канала: что уже уходило в черновики")
-    sp.add_argument("--rubrics", help="lot,result,week (по умолчанию lot,result; week — по понедельникам)")
+    sp.add_argument("--rubrics", help="lot,drop,house,sold,nofight,week,weekstats (по умолчанию всё, кроме week — по понедельникам "
+                         "и weekstats — по пятницам)")
     sp.add_argument("--send", action="store_true", help="отправить черновики в Telegram и запомнить их")
     sp.add_argument("--chat", help="чат для черновиков (иначе TELEGRAM_DRAFT_CHAT)")
     sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней (для проверки)")

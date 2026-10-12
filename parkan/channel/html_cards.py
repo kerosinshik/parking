@@ -292,3 +292,11 @@ def render_html(html: str, out_path, chrome: str | None = None) -> Path:
             raise RuntimeError("Chromium не сохранил карточку")
         Image.open(shot).convert("RGB").crop((0, 0, 1080, 1080)).save(out, "PNG", optimize=True)
     return out
+
+
+TEMPLATES = {"lot": lot_html, "list": list_html, "stats": stats_html, "cover": cover_html}
+
+
+def render(card: dict, out_path) -> Path:
+    """Карточка из словаря templates.*_card: поле template выбирает макет."""
+    return render_html(TEMPLATES[card.get("template", "lot")](card), out_path)
