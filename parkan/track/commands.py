@@ -65,7 +65,7 @@ def cmd_track_digest(a, con) -> int:
     items = digest.findings(con, a.state_dir, today, limit=a.limit)
     already = 0
     if a.registry:   # только находки, которых ещё не было в реестре отправленных
-        fresh = digest.unsent(items, digest.load_registry(a.registry))
+        fresh = digest.unsent(items, digest.load_registry(a.registry), today)
         already, items = len(items) - len(fresh), fresh
     text = digest.to_markdown(items, today, a.dashboard_url)
     if already and not items:

@@ -261,3 +261,20 @@ def test_closed_calls_kept_and_spike_baseline_after_tracking_start(con, tmp_path
 
     kinds = [f.kind for f in digest.works_findings(con, tmp_path, date(2026, 10, 7))]
     assert "всплеск аварий" not in kinds      # нормы по дням после начала учёта ещё нет
+
+
+def test_digest_registry_suppresses_repeat_of_sliding_series(tmp_path):
+    """Сеть по скользящему окну: та же серия на следующий день или неделю не уходит повторно."""
+    from parkan.track import digest
+    from parkan.track.digest import Finding
+    reg_path = tmp_path / "notified.json"
+    # отправлено 09.10 со старым форматом ключа (номер недели)
+    digest.mark_sent(reg_path, ['licenses:chain:закрыто:ООО "Лидер плюс":2026-41'], date(2026, 10, 9))
+    same = Finding("licenses", "сеть", "t", "d", 0.6, key='licenses:chain:закрыто:ООО "Лидер плюс":2026-10-06', repeat_days=7)
+    other = Finding("licenses", "сеть", "t", "d", 0.6, key='licenses:chain:открыто:ООО "Лидер плюс":2026-10-06', repeat_days=7)
+    reg = digest.load_registry(reg_path)
+    assert digest.unsent([same, other], reg, date(2026, 10, 12)) == [other]
+    # через неделю серия может прийти снова
+    assert digest.unsent([same], reg, date(2026, 10, 17)) == [same]
+    # без даты — прежнее поведение, только по ключу
+    assert digest.unsent([same], reg) == [same]

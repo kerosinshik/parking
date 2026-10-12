@@ -27,6 +27,9 @@ class Finding:
     detail: str
     score: float        # 0..1, чем больше — тем примечательнее
     key: str = ""       # постоянный ключ: одна и та же находка в разные дни даёт один ключ
+    # для находок по скользящему окну: ключ без последней части («серия») считается уже отправленным,
+    # если такая серия уходила в последние repeat_days дней, даже с другим ключом
+    repeat_days: int = 0
 
 
 def previous_sync(state_dir, dataset_ids) -> datetime | None:
@@ -183,21 +186,24 @@ def license_findings(con, state_dir, today: date) -> list[Finding]:
                                f"{value} при обычных {_num(statistics.median(hist))} в такой день недели",
                                min(1.0, 0.4 + z / 10), key=f"licenses:spike:{col}:{day}"))
     # сети: несколько точек за неделю, заметно больше своего обычного темпа
-    for subject, opened7, closed7, opened90, closed90, active in con.execute("""
+    for subject, opened7, closed7, opened90, closed90, active, first_open, first_close in con.execute("""
         SELECT subject,
                count(*) FILTER (WHERE opened > ?), count(*) FILTER (WHERE closed > ?),
                count(*) FILTER (WHERE opened > ?), count(*) FILTER (WHERE closed > ?),
-               count(*) FILTER (WHERE active)
+               count(*) FILTER (WHERE active),
+               min(opened) FILTER (WHERE opened > ?), min(closed) FILTER (WHERE closed > ?)
         FROM lic_points GROUP BY 1
         HAVING count(*) FILTER (WHERE opened > ?) >= 3 OR count(*) FILTER (WHERE closed > ?) >= 3
-    """, [today - timedelta(days=7)] * 2 + [today - timedelta(days=90)] * 2 + [today - timedelta(days=7)] * 2).fetchall():
-        for n7, n90, verb in ((opened7, opened90, "открыто"), (closed7, closed90, "закрыто")):
+    """, [today - timedelta(days=7)] * 2 + [today - timedelta(days=90)] * 2 + [today - timedelta(days=7)] * 4).fetchall():
+        for n7, n90, first, verb in ((opened7, opened90, first_open, "открыто"), (closed7, closed90, first_close, "закрыто")):
             weekly = n90 / 13
             if n7 >= 3 and n7 >= 2 * max(weekly, 1):
                 out.append(Finding("licenses", "сеть", f"{org(subject)}: {verb} {n7} {plural(n7, 'точка', 'точки', 'точек')} за неделю",
                                    f"обычно ~{_num(weekly)} в неделю; сейчас действует: {active}",
                                    min(1.0, 0.45 + n7 / 40),
-                                   key=f"licenses:chain:{verb}:{subject}:{today.isocalendar()[0]}-{today.isocalendar()[1]}"))
+                                   # ключ — дата первого события серии; окно скользит каждый день,
+                                   # поэтому повтор той же серии гасится по repeat_days, а не по ключу
+                                   key=f"licenses:chain:{verb}:{subject}:{first}", repeat_days=7))
     return out
 
 
@@ -312,8 +318,20 @@ def load_registry(path) -> dict:
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
 
-def unsent(items: list[Finding], registry: dict) -> list[Finding]:
-    return [f for f in items if f.key not in registry]
+def unsent(items: list[Finding], registry: dict, today: date | None = None) -> list[Finding]:
+    """Находки, которых нет в реестре. Серия с repeat_days считается отправленной, если любая находка
+    этой серии (тот же ключ без последней части) уходила не раньше чем repeat_days дней назад."""
+    out = []
+    for f in items:
+        if f.key in registry:
+            continue
+        if f.repeat_days and today is not None:
+            series = f.key.rsplit(":", 1)[0] + ":"
+            since = (today - timedelta(days=f.repeat_days)).isoformat()
+            if any(k.startswith(series) and v >= since for k, v in registry.items()):
+                continue
+        out.append(f)
+    return out
 
 
 def mark_sent(path, keys, today: date, keep_days: int = 60) -> dict:
