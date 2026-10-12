@@ -100,6 +100,7 @@ def result(r: dict) -> str:
     start, fin, ratio = float(r["start_price"]), float(r["final_price"]), float(r["final_to_start"])
     sub = re.sub(r";.*$", "", r.get("subway") or "")
     sub = re.sub(r" \(None мин пешком, None км\)", "", sub)
+    sub = re.sub(r"(\d)\.(\d)", r"\1,\2", sub)   # 0.59 км → 0,59 км
     space = f"{num(r['space_m2'])} м²" if r.get("space_m2") else ""
     m2 = f"{rub(r['final_price_per_m2'])}/м²" if r.get("final_price_per_m2") else ""
     return _join([

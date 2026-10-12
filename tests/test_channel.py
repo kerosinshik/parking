@@ -76,7 +76,7 @@ def test_drafts_rubrics_and_registry(con, tmp_path):
     assert cheap.card["big"] == "−40 %" and cheap.card["badge"] == "заявки до 09.10.2026"
     result = posts[-1]
     assert result.key == "result:1" and "в 2,9 раза" in result.text and "улица Льва Толстого, дом 5" in result.text
-    assert "Парк культуры" in result.text and result.card["big"] == "×2,9"
+    assert "Парк культуры (7 мин пешком, 0,5 км)" in result.text and result.card["big"] == "×2,9"
     assert "Торги 02.10.2026" in result.text and result.card["badge"] == "торги 02.10.2026"
 
     registry = {p.key: "2026-10-06" for p in posts}
