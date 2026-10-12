@@ -12,6 +12,7 @@ dependencies = ["duckdb>=1.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+channel = ["pillow>=10"]   # карточки постов для Telegram-канала
 
 [project.scripts]
 parkan = "parkan.cli:main"

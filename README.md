@@ -26,7 +26,7 @@ MVP по исследованию «Реализуемость аналитик�
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e '.[dev]'
-pytest                       # 37 тестов
+pytest                       # 50 тестов
 ```
 
 Нужен Python 3.10+. Единственная зависимость — DuckDB. PostGIS не нужен: геометрия считается в Python.
@@ -213,3 +213,16 @@ parkan track-torgi --state-dir state --results results/torgi-mashinomesta.csv --
 - Сбой сети по одному лоту не прерывает запуск: лот проверится в следующий раз. Страница
   с ответом 404 отмечается статусом «Страница лота недоступна».
 - `--slim-out` — компактная таблица за последние `--slim-days` (365) дней для дашборда торгов.
+
+## Telegram-канал (`channel-draft`)
+
+Черновики постов для канала о городских торгах на данных Пульса: «Лот дня», «Итоги», «Неделя вперёд»
+с карточками PNG, отправка в закрытый чат-«кухню».
+
+```bash
+pip install -e '.[channel]'
+parkan channel-draft --results results/torgi-mashinomesta.csv            # просмотр: channel_out/<дата>/
+parkan channel-draft --results results/torgi-mashinomesta.csv --send     # в кухню (TELEGRAM_BOT_TOKEN, TELEGRAM_DRAFT_CHAT)
+```
+
+Стратегия, архитектура, настройка и текущее состояние — [docs/channel.md](docs/channel.md).

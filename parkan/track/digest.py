@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import statistics
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 
 from . import metrics
@@ -30,6 +30,8 @@ class Finding:
     # для находок по скользящему окну: ключ без последней части («серия») считается уже отправленным,
     # если такая серия уходила в последние repeat_days дней, даже с другим ключом
     repeat_days: int = 0
+    # исходные цифры находки (цена, медиана, ссылка…) — для карточек канала, где текст собирается заново
+    data: dict = field(default_factory=dict)
 
 
 def previous_sync(state_dir, dataset_ids) -> datetime | None:
@@ -120,25 +122,29 @@ def lot_findings(con, state_dir, today: date, since: datetime | None) -> list[Fi
     for address, district, lots, price, space, m2, med, n, p05, until_d, lot_id, site in rows:
         link = metrics.lot_url(site, lot_id)
         until_d = f"{until_d}; лот: {link}" if link else until_d
+        data = {"address": _addr(address), "district": district, "price": price, "space": space, "m2": m2,
+                "lots": lots, "until": until_d.split(";")[0], "url": link}
         if cheapest is None or price < cheapest[3]:
-            cheapest = (address, district, lots, price, space, until_d)
+            cheapest = (address, district, lots, price, space, until_d, data)
         ratio = price / med if med else 1
         if n >= 5 and ratio <= 0.75:
             out.append(Finding("lots", "дешевле района",
                                f"Машино-место на {round((1 - ratio) * 100)} % дешевле медианы района",
                                f"{_addr(address)} ({district}): {_mln(price)} при медиане {_mln(med)}"
                                f"{f'; лотов по адресу: {lots}' if lots > 1 else ''}; заявки до {until_d}",
-                               min(1.0, 0.5 + (1 - ratio)), key=f"lots:cheap:{address}:{until_d.split(';')[0]}"))
+                               min(1.0, 0.5 + (1 - ratio)), key=f"lots:cheap:{address}:{until_d.split(';')[0]}",
+                               data={**data, "median": med, "discount": 1 - ratio}))
         elif p05 and m2 is not None and m2 <= p05:
             out.append(Finding("lots", "дёшево за м²", "Новый лот среди 5 % самых дешёвых по цене за м²",
                                f"{_addr(address)} ({district}): {round(m2):,} ₽/м², ".replace(",", " ")
-                               + f"{_mln(price)}; заявки до {until_d}", 0.55, key=f"lots:cheap:{address}:{until_d.split(';')[0]}"))
+                               + f"{_mln(price)}; заявки до {until_d}", 0.55, key=f"lots:cheap:{address}:{until_d.split(';')[0]}",
+                               data={**data, "median": med, "m2_p05": p05}))
     if cheapest:
-        a, d, lots, price, space, until_d = cheapest
+        a, d, lots, price, space, until_d, data = cheapest
         out.append(Finding("lots", "самый дешёвый новый", "Самый дешёвый новый лот",
                            f"{_addr(a)} ({d}): {_mln(price)}"
                            f"{f', {space:g} м²'.replace('.', ',') if space else ''}; заявки до {until_d}", 0.4,
-                           key=f"lots:cheapest:{a}:{until_d.split(';')[0]}"))
+                           key=f"lots:cheapest:{a}:{until_d.split(';')[0]}", data=data))
     # снижение стартовой цены у той же записи (видно только по журналу)
     src = events_source(state_dir, 1461)
     if src and since:
@@ -161,7 +167,9 @@ def lot_findings(con, state_dir, today: date, since: datetime | None) -> list[Fi
                                f"{_addr(addr)} ({district}): {_mln(old_p)} → {_mln(new_p)}"
                                + (f"; лот: {metrics.lot_url(site, lot_id)}" if metrics.lot_url(site, lot_id) else ""),
                                min(1.0, 0.6 + drop),
-                               key=f"lots:drop:{rid}:{new_p:.0f}"))
+                               key=f"lots:drop:{rid}:{new_p:.0f}",
+                               data={"address": _addr(addr), "district": district, "price": new_p, "old_price": old_p,
+                                     "drop": drop, "url": metrics.lot_url(site, lot_id)}))
     return out
 
 
