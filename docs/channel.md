@@ -117,7 +117,21 @@ metrics.parking_lots                        ─┘   cards.py     PNG-карто
 | `PARKAN_CHANNEL_STATE` | папка состояния канала, по умолчанию `channel_state` |
 | `PARKAN_STATE` | журнал Пульса, по умолчанию `state` |
 
-Ежедневный запуск — сразу после Пульса:
+Ежедневный запуск. Пульс работает как расписание (routine) Claude «Пульс города — ежедневный учёт
+и находки» (каждый день в 6:45 МСК, сессия «Пульс города — ежедневный учёт», та же облачная среда, где
+заданы `TELEGRAM_BOT_TOKEN`, `TELEGRAM_DRAFT_CHAT` и открыт `api.telegram.org`). Журнал и состояние хранятся
+в ветке `data` (`/home/user/parking-data`). Канал — шаг сразу после `track-torgi`:
+
+```bash
+python3 -m parkan.cli channel-draft --state-dir /home/user/parking-data/state \
+  --results /home/user/parking-data/results/torgi-mashinomesta.csv \
+  --channel-state /home/user/parking-data/channel_state --out /tmp/channel_out --send
+```
+
+и `channel_state/drafted.json` коммитится в ветку `data` вместе с журналом. Инструкции расписания меняются
+только из его собственной сессии.
+
+Вне Claude то же самое — через cron:
 
 ```cron
 0 6 * * *  cd /srv/parking && .venv/bin/parkan track-sync && \
@@ -145,7 +159,8 @@ metrics.parking_lots                        ─┘   cards.py     PNG-карто
 - [x] бот и кухня созданы, `TELEGRAM_BOT_TOKEN` и `TELEGRAM_DRAFT_CHAT` заданы в облачной среде Claude
 - [x] доступ к `api.telegram.org` из облачной среды открыт; бот — @poputny_metr_bot
 - [x] бот — администратор кухни «Попутный метр КУХНЯ»; 12.10.2026 отправлены первые черновики на живых данных (неделя вперёд, 2 итога, лот дня)
-- [ ] основной канал; включить cron
+- [ ] основной канал
+- [ ] шаг `channel-draft` в ежедневном расписании Пульса (меняется из сессии «Пульс города — ежедневный учёт»)
 - [x] первая проверка на живых данных (12.10.2026, см. журнал решений)
 - [x] название — «Попутный Метр»
 - [ ] выбрать направление дизайна (`channel-design.md`), сделать карточки всех типов
