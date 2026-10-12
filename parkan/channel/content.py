@@ -56,8 +56,13 @@ def result_posts(results_path, today: date, policy=POLICY) -> list[Post]:
                 and ratio >= policy["result_min_ratio"] and (r.get("checked_at") or "")[:10] >= since):
             rows.append((ratio, r))
     rows.sort(key=lambda x: -x[0])
+    seen, top = set(), []   # из одного дома — только самый яркий итог: соседние лоты похожи
+    for ratio, r in rows:
+        if r.get("address") not in seen:
+            seen.add(r.get("address"))
+            top.append((ratio, r))
     return [Post(f"result:{r['tender_id']}", "result", templates.result(r), card=templates.result_card(r), score=ratio)
-            for ratio, r in rows]
+            for ratio, r in top]
 
 
 def week_posts(con, state_dir, today: date, policy=POLICY) -> list[Post]:

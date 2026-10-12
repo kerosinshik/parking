@@ -113,16 +113,18 @@ def lot_findings(con, state_dir, today: date, since: datetime | None) -> list[Fi
         SELECT s.address, s.district, count(*) AS lots, min(s.price) AS price, median(s.space) AS space,
                min(s.m2) AS m2, any_value(d.med) AS med, any_value(d.n) AS n, any_value(c.p05) AS p05,
                strftime(min(s.end_d), '%d.%m.%Y') AS until_d, arg_min(s.lot_id, s.price) AS lot_id,
-               arg_min(s.site, s.price) AS site
+               arg_min(s.site, s.price) AS site, arg_min(s.space, s.price) AS lot_space
         FROM sale s JOIN dist d USING (district) CROSS JOIN city c
         WHERE s.{new_cond}
         GROUP BY s.address, s.district
     """, [today, new_arg]).fetchall()
     cheapest = None
-    for address, district, lots, price, space, m2, med, n, p05, until_d, lot_id, site in rows:
+    for address, district, lots, price, space, m2, med, n, p05, until_d, lot_id, site, lot_space in rows:
         link = metrics.lot_url(site, lot_id)
         until_d = f"{until_d}; лот: {link}" if link else until_d
-        data = {"address": _addr(address), "district": district, "price": price, "space": space, "m2": m2,
+        # цифры самого дешёвого лота по адресу: площадь и ₽/м² — того же лота, что и цена
+        data = {"address": _addr(address), "district": district, "price": price, "space": lot_space,
+                "m2": price / lot_space if lot_space else None,
                 "lots": lots, "until": until_d.split(";")[0], "url": link}
         if cheapest is None or price < cheapest[3]:
             cheapest = (address, district, lots, price, space, until_d, data)

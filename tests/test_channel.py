@@ -76,7 +76,7 @@ def test_drafts_rubrics_and_registry(con, tmp_path):
     assert cheap.card["big"] == "−40 %" and cheap.card["badge"] == "заявки до 09.10.2026"
     result = posts[-1]
     assert result.key == "result:1" and "в 2,9 раза" in result.text and "улица Льва Толстого, дом 5" in result.text
-    assert "Парк культуры" in result.text and result.card["big"] == "×2,9"
+    assert "Парк культуры (7 мин пешком, 0,5 км)" in result.text and result.card["big"] == "×2,9"
     assert "Торги 02.10.2026" in result.text and result.card["badge"] == "торги 02.10.2026"
 
     registry = {p.key: "2026-10-06" for p in posts}
@@ -117,6 +117,10 @@ def test_bot_caption_split_and_retry(tmp_path):
     bot.send_post("@kitchen", "x" * 2000, png)
     assert [c[0] for c in t.calls] == ["sendPhoto", "sendMessage"]
 
+    t = FakeTransport()
+    telegram.Bot("T", transport=t).call("getMe", {})
+    assert t.calls == [("getMe", b"")]                 # без параметров — пустое тело, не пустой multipart
+
     t = FakeTransport([(429, b'{"ok": false, "parameters": {"retry_after": 1}}')])
     telegram.Bot("T", transport=t, sleep=lambda s: None).send_post("@kitchen", "текст")
     assert [c[0] for c in t.calls] == ["sendMessage", "sendMessage"]
@@ -130,7 +134,7 @@ def test_card_renders(tmp_path):
     from PIL import Image
     card = {"label": "ЛОТ ДНЯ", "big": "−40 %", "sub": "1,20 млн ₽ при медиане района 2,00 млн ₽",
             "place": "очень длинный адрес " * 8, "district": "Пресненский", "badge": "заявки до 09.10.2026"}
-    out = cards.render(card, tmp_path / "c.png", "Торги Москвы")
+    out = cards.render(card, tmp_path / "c.png", "Попутный Метр")
     assert Image.open(out).size == (cards.W, cards.H)
 
 
