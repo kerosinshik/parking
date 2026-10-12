@@ -168,6 +168,20 @@ def lot_card(r: dict) -> dict:
                  price_sub=" · ".join(x for x in price_sub if x), address=r["place"], district=r.get("district"))
 
 
+def torgi_card(r: dict, ref: dict) -> dict:
+    """«Старт ниже итогов района»: квартира в продаже, у которой стартовая цена м² заметно ниже медианы итоговых
+    цен проданных квартир района (market.torgi_reference). Подпись честно говорит, что сравнивается старт с итогами."""
+    m2 = r["price"] / r["space"]
+    where = {"дом": "в этом доме", "район": "района"}.get(ref["level"], "округа")
+    n = ref["n"]
+    return _card("lot", "СТАРТ НИЖЕ ИТОГОВ", type="flat", headline=f"−{pct(1 - m2 / ref['value'])}%",
+                 headline_sub=f"старт за м² к итогам торгов {where}",
+                 deadline=f"заявки до {day(r['end_d'])}" if r.get("end_d") else "", price=money(r["price"]),
+                 price_sub=f"старт {rub(m2)}/м² · {area(r['space'])} · медиана итогов {rub(ref['value'])}/м² "
+                           f"({n} {plural(n, ('сделка', 'сделки', 'сделок'))})",
+                 address=r["place"], district=r.get("district"))
+
+
 # ---------------------------------------------------------------- 2. Снижение цены
 
 def drop(r: dict) -> str:

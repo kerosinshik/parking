@@ -40,8 +40,8 @@ def collect(con, state_dir, today: date, market_path=None, results_path=None, ag
     days = POLICY["torgi_days"]
     sold = market.torgi_sold(all_results, today, days)   # свой ориентир: итоги торгов квартир за окно
 
-    def tref(district, adm, exclude=None):
-        r = market.torgi_reference(sold, district, adm, exclude=exclude)
+    def tref(district, adm, exclude=None, address=None):
+        r = market.torgi_reference(sold, district, adm, exclude=exclude, address=address)
         return {"value": r["value"], "n": r["n"], "level": r["level"]} if r else None
 
     flats = []
@@ -59,7 +59,9 @@ def collect(con, state_dir, today: date, market_path=None, results_path=None, ag
             f["gain"] = (sale["value"] - f["base"]) * f["space"]
         if rent and f["price"] and f["space"]:
             f["yield"] = rent["value"] * 12 * f["space"] / f["price"]
-        f["torgi"] = tref(f["district"], f["adm"])
+        f["torgi"] = tref(f["district"], f["adm"], address=f["address"])
+        again = market.torgi_relisted(sold, f["address"], f["space"])
+        f["relisted"] = again["date"].isoformat() if again else None
         if f["torgi"]:
             f["gap_t"] = 1 - f["base"] / f["torgi"]["value"]
         f["end_d"] = f["end_d"].isoformat() if f.get("end_d") else None
@@ -75,7 +77,7 @@ def collect(con, state_dir, today: date, market_path=None, results_path=None, ag
     for d, rows in sorted(group("district", flats).items()):
         m = rows[0]["market"]
         lot_m2 = _med([r["base"] for r in rows])
-        tr = rows[0]["torgi"]
+        tr = tref(d, rows[0]["adm"])   # ориентир района (без привязки к дому)
         districts.append({"torgi": tr, "gap_t": 1 - lot_m2 / tr["value"] if tr else None, "district": t.district(d), "okrug": rows[0]["okrug"], "n": len(rows), "lot_m2": lot_m2,
                           "min_m2": min(r["base"] for r in rows), "space": _med([r["space"] for r in rows]),
                           "market": m, "rent": rows[0]["rent"], "gap": 1 - lot_m2 / m["value"] if m else None})
@@ -83,7 +85,7 @@ def collect(con, state_dir, today: date, market_path=None, results_path=None, ag
     for o, rows in group("okrug", flats).items():
         m = _ref(obs, "sale_m2", None, o, today, age)
         lot_m2 = _med([r["base"] for r in rows])
-        osold = [x["m2"] for x in sold if x["okrug"] == o]
+        osold = [x["m2"] for x in sold if x["okrug"] == o and x["m2"] and x["recent"]]
         okrugs.append({"okrug": o, "n": len(rows), "lot_m2": lot_m2, "market": m,
                        "final_m2": _med(osold) if len(osold) >= market.TORGI_MIN else None, "final_n": len(osold),
                        "gap": 1 - lot_m2 / m["value"] if m else None})
@@ -100,7 +102,7 @@ def collect(con, state_dir, today: date, market_path=None, results_path=None, ag
                         "start": r.get("start_price"), "final": r.get("final_price"), "space": r.get("space_m2"),
                         "m2": m2, "ratio": r.get("final_to_start"), "house_type": r.get("house_type"),
                         "market": sale, "gap": 1 - m2 / sale["value"] if sale and m2 else None, "url": r.get("url")})
-        tr = tref(r.get("district"), r.get("adm_area"), exclude=r.get("tender_id"))
+        tr = tref(r.get("district"), r.get("adm_area"), exclude=r.get("tender_id"), address=r.get("address"))
         results[-1].update(torgi=tr, gap_t=1 - m2 / tr["value"] if tr and m2 else None)
     results.sort(key=lambda r: r["date"], reverse=True)
 
@@ -122,7 +124,7 @@ def collect(con, state_dir, today: date, market_path=None, results_path=None, ag
     cov = {"район": 0, "округ": 0, "город": 0, "нет": 0}
     for d in districts:
         cov[d["market"]["level"] if d["market"] else "нет"] += 1
-    return {"today": today.isoformat(), "generated": now_msk().strftime("%d.%m.%Y %H:%M"), "age": age["район"] if isinstance(age, dict) else age, "city": city, "torgi_days": days, "sold_n": len(sold),
+    return {"today": today.isoformat(), "generated": now_msk().strftime("%d.%m.%Y %H:%M"), "age": age["район"] if isinstance(age, dict) else age, "city": city, "torgi_days": days, "sold_n": sum(1 for x in sold if x["m2"] and x["recent"]),
             "have_lots": have, "flats": flats, "districts": districts, "okrugs": okrugs, "results": results,
             "journal": journal, "coverage": cov,
             "sources": sorted({o["source"] for o in obs}),
@@ -226,7 +228,7 @@ function overview() {
     <th class="l">Район</th><th>Округ</th><th>Лотов</th><th>Медиана м²</th><th>Мин. м²</th><th>Площадь</th><th>Итоги м²</th><th>Старт к итогам</th><th>Рынок м²</th><th>Торги к рынку</th><th>Аренда м²/мес</th><th class="l">Источник</th>
     </tr></thead><tbody>${D.districts.sort((a, b) => b.n - a.n).map(d => `<tr><td class="l">${esc(d.district)}</td><td>${esc(d.okrug || "—")}</td>
     <td>${d.n}</td><td>${k(d.lot_m2)}</td><td>${k(d.min_m2)}</td><td>${d.space ? Math.round(d.space) + " м²" : "—"}</td>
-    <td>${d.torgi ? k(d.torgi.value) + (d.torgi.level === "округ" ? "*" : "") : "—"}</td>${gapCell(d.gap_t)}
+    <td>${d.torgi ? k(d.torgi.value) + (d.torgi.level === "округ" ? " (окр.)" : "") : "—"}</td>${gapCell(d.gap_t)}
     <td>${d.market ? k(d.market.value) : "—"}</td>${gapCell(d.gap)}<td>${d.rent ? rub(d.rent.value) : "—"}</td><td class="l">${src(d.market)}</td></tr>`).join("")}
     </tbody></table></div></div>`;
   $("#tab-overview").innerHTML = h;
@@ -277,7 +279,7 @@ function lotsTab() {
     const ok = $("#f-ok").value, by = $("#f-sort").value;
     const key = {gap_t: f => -(f.gap_t ?? -9), gap: f => -(f.gap ?? -9), discount: f => -(f.discount ?? -9), base: f => f.base, end: f => f.end_d || "9"}[by];
     const rows = D.flats.filter(f => !ok || f.okrug === ok).sort((a, b) => key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
-    $("#lots-b").innerHTML = rows.map(f => `<tr><td class="l">${f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.place)}</a>` : esc(f.place)}<br><span class="note">${esc((f.district || "").replace(/^район /, ""))}</span></td>
+    $("#lots-b").innerHTML = rows.map(f => `<tr><td class="l">${f.url ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.place)}</a>` : esc(f.place)}<br><span class="note">${esc((f.district || "").replace(/^район /, ""))}${f.torgi && f.torgi.level === "дом" ? " · есть итоги в этом доме" : ""}${f.relisted ? " · уже не продалась " + day(f.relisted) : ""}</span></td>
       <td>${esc(f.okrug || "—")}</td><td>${m2(f.space)}</td><td>${mln(f.price)}</td><td>${k(f.base)}</td>
       ${gapCell(f.discount)}${gapCell(f.gap_t)}${gapCell(f.gap)}<td>${f.gain > 0 ? mln(f.gain) : "—"}</td><td>${f.yield ? (f.yield * 100).toFixed(1).replace(".", ",") + " %" : "—"}</td><td>${day(f.end_d)}</td></tr>`).join("")
       || `<tr><td colspan="11" class="empty">Нет квартир.</td></tr>`;

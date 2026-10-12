@@ -74,7 +74,9 @@ def test_drafts_with_and_without_market(tmp_path):
     journal(con, tmp_path)
     res = results_csv(tmp_path)
     plain = content.drafts(con, tmp_path, TODAY, results_path=res)
-    assert not any("market" in (p.facts or {}).get("facts", {}) for p in plain)   # без журнала — как раньше
+    ext = [k for p in plain for k in ((p.facts or {}).get("facts", {}).get("market") or {})
+           if k.startswith(("market_", "moscow_", "below_market", "gross_"))]
+    assert ext == []                                   # без журнала — без рынка; итоги торгов (torgi_*) — свои данные
 
     log = tmp_path / "obs.csv"
     market.add(log, market.read_rows(obs_csv(tmp_path,
@@ -202,25 +204,36 @@ def test_rosstat_parse_and_city_background(tmp_path):
     assert copy.check("По данным Росстата, в Москве — 391 067 ₽ за метр.", f, with_card=False) == []
 
 
-def test_torgi_reference_excludes_self_and_falls_back():
-    def row(i, district, m2, d="2026-09-01", adm="Центральный административный округ"):
-        return {"kind": "flat", "tender_id": str(i), "final_price": m2 * 50, "space_m2": 50, "district": district,
-                "adm_area": adm, "trades_date": d}
-    results = [row(i, "район Хамовники", 400_000 + i * 10_000) for i in range(6)]
-    results += [row(10, "Басманный район", 300_000), row(11, "район Хамовники", 999_999, d="2026-05-01"),   # вне окна
-                {"kind": "parking", "tender_id": "12", "final_price": 1, "space_m2": 13, "trades_date": "2026-09-01"}]
+def test_torgi_reference_house_district_okrug_and_relisted():
+    def row(i, district, m2, addr, d="2026-09-01", adm="Центральный административный округ", sold=True, space=50):
+        return {"kind": "flat", "tender_id": str(i), "final_price": m2 * space if sold else None, "space_m2": space,
+                "start_price": m2 * space, "district": district, "adm_area": adm, "trades_date": d, "address": addr,
+                "status": "Признаны состоявшимися" if sold else "Признаны несостоявшимися"}
+    # в Хамовниках 6 продаж в 3 домах; новостройка «ул. Новая, 1» дорогая и продаёт много — медиана по домам
+    results = [row(i, "район Хамовники", 600_000, "ул. Новая, 1") for i in range(4)]
+    results += [row(4, "район Хамовники", 400_000, "ул. Старая, 2"), row(5, "район Хамовники", 420_000, "ул. Старая, 3")]
+    results += [row(10, "Басманный район", 300_000, "ул. Басманная, 1"),
+                row(11, "район Хамовники", 999_999, "ул. Новая, 1", d="2025-05-01"),                      # старше года
+                row(12, "район Хамовники", 380_000, "ул. Тихая, 5", sold=False, space=41, d="2026-07-01"),  # не продана
+                {"kind": "parking", "tender_id": "13", "final_price": 1, "space_m2": 13, "trades_date": "2026-09-01"}]
     sold = market.torgi_sold(results, TODAY)
-    assert len(sold) == 7
-    ref = market.torgi_reference(sold, "район Хамовники", "Центральный административный округ")
-    assert ref["level"] == "район" and ref["n"] == 6 and ref["value"] == 425_000
-    ref = market.torgi_reference(sold, "район Хамовники", "ЦАО", exclude="0")   # без самого лота — 5, ещё район
-    assert ref["level"] == "район" and ref["n"] == 5
+    assert len(sold) == 8
+    ref = market.torgi_reference(sold, "район Хамовники", "ЦАО", address="ул. Тихая, 5")
+    assert ref["level"] == "район" and ref["n"] == 6 and ref["houses"] == 3 and ref["value"] == 420_000
+    ref = market.torgi_reference(sold, "район Хамовники", "ЦАО", address="ул. Старая, 2", exclude="99")
+    assert ref["level"] == "дом" and ref["value"] == 400_000                    # тот же дом важнее района
+    assert market.torgi_reference(sold, "район Хамовники", "ЦАО", address="ул. Старая, 2", exclude="4")["level"] == "округ"   # без неё в районе 2 дома
     ref = market.torgi_reference(sold, "Басманный район", "Центральный административный округ")
-    assert ref["level"] == "округ" and ref["n"] == 7                           # в Басманном одна продажа — округ
-    f = market.torgi_facts(market.torgi_reference(sold, "район Хамовники", "ЦАО"), 17_000_000, 50)
-    assert f["below_torgi"] == "20 %" and f["torgi_difference"] == "4,25 млн ₽" and f["torgi_deals"] == "6 квартир"
-    assert "районе Хамовники" in f["torgi_what"] and f["torgi_period"] == "1 сентября"
+    assert ref["level"] == "округ" and ref["n"] == 7 and ref["houses"] == 4     # в Басманном одна продажа — округ
+    assert market.torgi_reference(sold, "Басманный район", None) is None
+    f = market.torgi_facts(market.torgi_reference(sold, "район Хамовники", "ЦАО"), 16_800_000, 50)
+    assert f["below_torgi"] == "20 %" and f["torgi_difference"] == "4,20 млн ₽" and f["torgi_deals"] == "6 квартир"
+    assert "районе Хамовники" in f["torgi_what"] and "3 домов" in f["torgi_what"] and f["torgi_period"] == "1 сентября"
     assert "above_torgi" in market.torgi_facts(market.torgi_reference(sold, "район Хамовники", "ЦАО"), 25_000_000, 50)
-    r = {"kind": "flat", "price": 17_000_000, "space": 50, "district": "район Хамовники", "adm": "ЦАО"}
+    again = market.torgi_relisted(sold, "ул. Тихая, 5", 41.0)
+    assert again["date"] == date(2026, 7, 1) and market.torgi_relisted(sold, "ул. Тихая, 5", 60) is None
+    r = {"kind": "flat", "price": 15_000_000, "space": 41, "district": "район Хамовники", "adm": "ЦАО",
+         "address": "ул. Тихая, 5"}
     market.enrich([r], [], TODAY, content.POLICY["market_max_age_days"], sold=sold)   # без журнала рынка тоже работает
-    assert r["market"]["below_torgi"] == "20 %"
+    assert r["market"]["torgi_level"] == "район" and "1 июля" in r["market"]["relisted"]
+    assert "torgi_compare_note" in r["market"]

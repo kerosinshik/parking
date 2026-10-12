@@ -310,59 +310,99 @@ def facts(c: dict | None) -> dict | None:
 
 # ---------------------------------------------------------------- ориентир по итогам торгов (свои данные)
 
-TORGI_DAYS = 90     # окно итогов
-TORGI_MIN = 5       # проданных квартир в районе, иначе — округ, иначе ориентира нет
+TORGI_DAYS = 90     # окно итогов для района и округа
+TORGI_HOUSE_DAYS = 365   # история дома и самой квартиры — за год
+TORGI_MIN = 5       # проданных квартир в районе/округе
+TORGI_MIN_HOUSES = 3     # …и хотя бы в стольких разных домах: одна новостройка не должна задавать «цену района»
 
 
 def torgi_sold(results: list[dict], today: date, days: int = TORGI_DAYS) -> list[dict]:
-    """Проданные квартиры за окно: tender_id, ключи района и округа, итоговая цена м², дата торгов."""
+    """Итоги торгов квартир за год (и проданные, и нет): id, адрес, район, округ, площадь, старт и итог за м²,
+    дата, продана ли, попадает ли в окно days (для ориентира района и округа)."""
     out = []
     for r in results or []:
-        if r.get("kind") != "flat" or not r.get("final_price"):
+        if r.get("kind") != "flat":
             continue
-        m2 = r.get("final_price_per_m2") or (r["final_price"] / r["space_m2"] if r.get("space_m2") else None)
         d = _date(r.get("trades_date"))
-        if not m2 or not d or not 0 <= (today - d).days <= days:
+        if not d or not 0 <= (today - d).days <= TORGI_HOUSE_DAYS:
             continue
-        out.append({"id": r.get("tender_id"), "district": _norm(r.get("district")), "okrug": okrug_key(r.get("adm_area")),
-                    "area": r.get("district"), "m2": m2, "date": d})
+        space = r.get("space_m2")
+        m2 = r.get("final_price_per_m2") or (r["final_price"] / space if r.get("final_price") and space else None)
+        start = r["start_price"] / space if r.get("start_price") and space else None
+        out.append({"id": r.get("tender_id"), "addr": _norm(r.get("address")), "district": _norm(r.get("district")),
+                    "okrug": okrug_key(r.get("adm_area")), "area": r.get("district"), "space": space,
+                    "m2": m2 if r.get("final_price") else None, "start_m2": start, "date": d,
+                    "status": r.get("status"), "recent": (today - d).days <= days})
     return out
 
 
-def torgi_reference(sold: list[dict], district: str | None, adm: str | None, exclude=None,
-                    min_n: int = TORGI_MIN) -> dict | None:
-    """Медиана итоговой цены м² проданных квартир района (меньше min_n — округа); сам лот в выборку не входит."""
+def torgi_reference(sold: list[dict], district: str | None, adm: str | None, exclude=None, address: str | None = None,
+                    min_n: int = TORGI_MIN, min_houses: int = TORGI_MIN_HOUSES) -> dict | None:
+    """Ориентир по итогам торгов, сам лот не считается:
+    1) тот же дом — медиана итогов проданных в нём квартир за год;
+    2) район, затем округ — медиана по домам (медиана медиан домов) за окно, если продаж ≥ min_n в ≥ min_houses домах."""
     import statistics
-    for level, key, field in (("район", _norm(district) if district else None, "district"), ("округ", okrug_key(adm), "okrug")):
-        if not key:
+    pool = [x for x in sold if x["m2"] and (exclude is None or x["id"] != exclude)]
+    key = _norm(address) if address else None
+    house = [x for x in pool if key and x["addr"] == key]
+    if house:
+        return {"level": "дом", "area": address, "n": len(house), "houses": 1,
+                "value": statistics.median(x["m2"] for x in house),
+                "since": min(x["date"] for x in house), "until": max(x["date"] for x in house)}
+    for level, k, field in (("район", _norm(district) if district else None, "district"), ("округ", okrug_key(adm), "okrug")):
+        if not k:
             continue
-        hits = [x for x in sold if x[field] == key and (exclude is None or x["id"] != exclude)]
-        if len(hits) >= min_n:
-            return {"level": level, "area": district if level == "район" else key, "n": len(hits),
-                    "value": statistics.median(x["m2"] for x in hits),
+        hits = [x for x in pool if x["recent"] and x[field] == k]
+        by_house: dict[str, list[float]] = {}
+        for x in hits:
+            by_house.setdefault(x["addr"], []).append(x["m2"])
+        if len(hits) >= min_n and len(by_house) >= min_houses:
+            return {"level": level, "area": district if level == "район" else k, "n": len(hits), "houses": len(by_house),
+                    "value": statistics.median(statistics.median(v) for v in by_house.values()),
                     "since": min(x["date"] for x in hits), "until": max(x["date"] for x in hits)}
     return None
 
 
-def torgi_facts(ref: dict | None, price, space, days: int = TORGI_DAYS) -> dict | None:
-    """Факты: насколько лот дешевле или дороже того, за сколько обычно уходят квартиры района на торгах."""
-    if not ref or not price or not space:
+def torgi_relisted(sold: list[dict], address: str | None, space, exclude=None) -> dict | None:
+    """Та же квартира (адрес и площадь) уже выставлялась и не была продана — последняя такая попытка."""
+    if not address or not space:
         return None
+    key = _norm(address)
+    tries = [x for x in sold if x["addr"] == key and x["space"] and abs(x["space"] - space) < 0.15
+             and not x["m2"] and x["id"] != exclude]
+    return max(tries, key=lambda x: x["date"]) if tries else None
+
+
+def _torgi_where(ref: dict) -> str:
+    return {"дом": "в этом же доме", "район": f"в районе {t.district(ref['area'])}"}.get(ref["level"], f"в {ref['area']}")
+
+
+def torgi_facts(ref: dict | None, price, space, days: int = TORGI_DAYS, relisted: dict | None = None) -> dict | None:
+    """Факты: насколько лот дешевле или дороже того, за сколько уходят квартиры этого дома / района на торгах."""
+    f = {}
+    if relisted:
+        f["relisted"] = (f"эта квартира уже выставлялась на торги {t.day(relisted['date'])} "
+                         f"({relisted.get('status') or 'не продана'}) и не нашла покупателя")
+    if not ref or not price or not space:
+        return f or None
     m2 = price / space
     gap = 1 - m2 / ref["value"]
-    where = f"в районе {t.district(ref['area'])}" if ref["level"] == "район" else f"в {ref['area']}"
-    f = {"torgi_price_per_m2": f"{t.rub(ref['value'])}/м²",
-         "torgi_what": f"медиана итоговой цены квадратного метра квартир, проданных на торгах torgi.mos.ru {where} "
-                       f"за последние {days} дней (без этого лота)",
-         "torgi_deals": f"{ref['n']} {t.plural(ref['n'], ('квартира', 'квартиры', 'квартир'))}",
-         "torgi_period": t.day(ref["since"]) if ref["since"] == ref["until"]
-         else f"с {t.day(ref['since'])} по {t.day(ref['until'])}"}
+    period = f"за год" if ref["level"] == "дом" else f"за последние {days} дней"
+    what = (f"медиана итоговой цены квадратного метра квартир, проданных на торгах torgi.mos.ru {_torgi_where(ref)} "
+            f"{period} (без этого лота)")
+    if ref["level"] != "дом":
+        what += f"; считается по домам ({ref['houses']} домов), чтобы один дом не задавал цену"
+    f.update({"torgi_price_per_m2": f"{t.rub(ref['value'])}/м²", "torgi_level": ref["level"], "torgi_what": what,
+              "torgi_deals": f"{ref['n']} {t.plural(ref['n'], ('квартира', 'квартиры', 'квартир'))}",
+              "torgi_period": t.day(ref["since"]) if ref["since"] == ref["until"]
+              else f"с {t.day(ref['since'])} по {t.day(ref['until'])}"})
+    base = "этого дома" if ref["level"] == "дом" else "района" if ref["level"] == "район" else "округа"
     if gap > 0:
         f.update(below_torgi=f"{t.pct(gap)} %", torgi_difference=t.money(gap * ref["value"] * space),
-                 torgi_difference_means="на столько дешевле, чем стоила бы эта площадь по медиане итогов района")
+                 torgi_difference_means=f"на столько дешевле, чем стоила бы эта площадь по медиане итогов {base}")
     else:
         f.update(above_torgi=f"{t.pct(-gap)} %", torgi_difference=t.money(-gap * ref["value"] * space),
-                 torgi_difference_means="на столько дороже, чем стоила бы эта площадь по медиане итогов района")
+                 torgi_difference_means=f"на столько дороже, чем стоила бы эта площадь по медиане итогов {base}")
     return f
 
 
@@ -384,8 +424,10 @@ def enrich(rows: list[dict], obs: list[dict], today: date, max_age_days, *, pric
                         reference(obs, "rent_m2_month", *args, levels=local))
             f.update(facts(c) or {}, **(city or {}))
         if sold:
-            ref = torgi_reference(sold, r.get(district), r.get(adm), exclude=r.get(own_id) if own_id else None)
-            tf = torgi_facts(ref, r.get(price), r.get(space))
+            own = r.get(own_id) if own_id else None
+            ref = torgi_reference(sold, r.get(district), r.get(adm), exclude=own, address=r.get("address"))
+            tf = torgi_facts(ref, r.get(price), r.get(space),
+                             relisted=torgi_relisted(sold, r.get("address"), r.get(space), exclude=own))
             if tf and not own_id:   # лот в продаже: сравниваем его старт с итогами — цена на аукционе ещё может вырасти
                 tf["torgi_compare_note"] = ("сравнивается стартовая цена лота с итоговыми ценами проданных квартир; "
                                             "на аукционе цена может вырасти")
