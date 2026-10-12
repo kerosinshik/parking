@@ -182,6 +182,23 @@ def torgi_card(r: dict, ref: dict) -> dict:
                  address=r["place"], district=r.get("district"))
 
 
+def torgi(r: dict, ref: dict) -> str:
+    """«Старт ниже итогов»: шаблонный текст (запасной, если Claude не написал свой)."""
+    m2 = r["price"] / r["space"]
+    where = {"дом": "в этом же доме", "район": "в районе"}.get(ref["level"], "в округе")
+    n = ref["n"]
+    return _post([
+        f"📉 <b>Старт на {pct(1 - m2 / ref['value'])} % ниже итогов торгов {where}</b>", "",
+        _where(r["place"], r.get("district")),
+        f"💰 <b>{money(r['price'])}</b> · {rub(m2)}/м² · {area(r['space'])}",
+        f"📊 Медиана итогов {where}: {rub(ref['value'])}/м² ({n} {plural(n, ('сделка', 'сделки', 'сделок'))}, "
+        f"{day(ref['since'])} – {day(ref['until'])})",
+        "Это стартовая цена: на аукционе она может вырасти.",
+        f"⏳ Заявки до {day(r.get('end_d'))}" if r.get("end_d") else None,
+        link(r.get("url")),
+    ], ["#стартнижеитогов", "#квартиры"])
+
+
 # ---------------------------------------------------------------- 2. Снижение цены
 
 def drop(r: dict) -> str:

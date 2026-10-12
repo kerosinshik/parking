@@ -8,7 +8,8 @@
 - sold     — «Продано дороже»: итог торгов заметно выше старта;
 - nofight  — «Без борьбы»: один участник, продано по стартовой цене;
 - week     — «Неделя вперёд» (понедельник): выгодные лоты с дедлайном заявок за 7 дней;
-- weekstats — «Итоги недели» (пятница): продано, доля по старту, рекорд.
+- weekstats — «Итоги недели» (пятница): продано, доля по старту, рекорд;
+- torgi    — «Старт ниже итогов»: квартира в продаже, старт за м² заметно ниже итогов торгов в её доме или районе.
 """
 
 from __future__ import annotations
@@ -40,8 +41,12 @@ POLICY = {
     # рыночный ориентир старше — не показываем (журнал market-add); Росстат по Москве — раз в квартал
     "market_max_age_days": {"район": 60, "округ": 60, "город": 200},
     "torgi_days": 90,           # ориентир по итогам торгов: квартиры, проданные за 90 дней
+    "torgi_min_gap": 0.20,      # «Старт ниже итогов»: старт за м² ниже ориентира минимум на 20 %
+    "torgi_levels": ("дом", "район"),   # ориентир по округу слишком грубый для отдельного поста
+    "torgi_min_days_left": 2,   # до конца приёма заявок — хотя бы 2 дня, чтобы читатель успел
+    "torgi_per_day": 1,
 }
-RUBRICS = ("lot", "drop", "house", "sold", "nofight", "week", "weekstats")
+RUBRICS = ("lot", "drop", "house", "sold", "nofight", "week", "weekstats", "torgi")
 
 
 @dataclass
@@ -86,6 +91,33 @@ def drop_posts(con, state_dir, today, policy=POLICY, obs=(), sold=None) -> list[
 def house_posts(con, state_dir, today, policy=POLICY) -> list[Post]:
     return [Post(f"house:{r['kind']}:{r['address']}:{r['end_d']}", "house", templates.house(r), templates.house_card(r),
                  score=r["n"], facts=facts.house(r)) for r in lots.new_houses(con, state_dir, today, policy["house_min_lots"])]
+
+
+def torgi_posts(con, today: date, sold: list[dict], policy=POLICY) -> list[Post]:
+    """Квартиры в продаже, у которых старт за м² ниже итогов торгов в том же доме или районе.
+
+    Без пометки «уже не продалась»; по адресу — один лот (самый дешёвый к ориентиру); ключ — адрес, чтобы дом,
+    где выставили сразу несколько квартир, не шёл в канал каждый день."""
+    if not sold:
+        return []
+    rows = lots._finish(lots._rows(con, "SELECT * FROM ch_sale WHERE kind = 'flat' AND (end_d IS NULL OR end_d >= ?)",
+                                   [today + timedelta(days=policy["torgi_min_days_left"])]))
+    best: dict[str, tuple] = {}
+    for r in rows:
+        ref = market.torgi_reference(sold, r.get("district"), r.get("adm"), address=r.get("address"))
+        if not ref or ref["level"] not in policy["torgi_levels"] or not r.get("space"):
+            continue
+        if market.torgi_relisted(sold, r.get("address"), r.get("space")):
+            continue
+        gap = 1 - r["price"] / r["space"] / ref["value"]
+        if gap >= policy["torgi_min_gap"] and (r["address"] not in best or gap > best[r["address"]][0]):
+            best[r["address"]] = (gap, r, ref)
+    out = []
+    for gap, r, ref in sorted(best.values(), key=lambda x: -x[0]):
+        market.enrich([r], [], today, policy["market_max_age_days"], sold=sold)
+        out.append(Post(f"torgi:{r['address']}", "torgi", templates.torgi(r, ref), templates.torgi_card(r, ref),
+                        score=gap, facts=facts.torgi(r)))
+    return out
 
 
 def _recent(results: list[dict], today: date, days: int) -> list[dict]:
@@ -156,7 +188,7 @@ def weekstats_posts(results: list[dict], today: date, policy=POLICY) -> list[Pos
 
 
 def default_rubrics(today: date, policy=POLICY) -> tuple[str, ...]:
-    r = ["lot", "drop", "house", "sold", "nofight"]
+    r = ["lot", "drop", "house", "sold", "nofight", "torgi"]
     if today.weekday() == policy["week_weekday"]:
         r.append("week")
     if today.weekday() == policy["weekstats_weekday"]:
@@ -192,6 +224,8 @@ def drafts(con, state_dir, today: date, *, results_path=None, rubrics=None, regi
         out += _mix_posts(fresh(drop_posts(con, state_dir, today, policy, obs, sold)), policy["drops_per_day"])
     if "sold" in rubrics:
         out += _mix_posts(fresh(sold_posts(results, today, policy)), policy["sold_per_day"])
+    if have_lots and "torgi" in rubrics:
+        out += fresh(torgi_posts(con, today, sold, policy))[:policy["torgi_per_day"]]
     if "nofight" in rubrics:
         out += _mix_posts(fresh(nofight_posts(results, today, policy)), policy["nofight_per_day"])
     return out

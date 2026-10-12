@@ -237,3 +237,29 @@ def test_torgi_reference_house_district_okrug_and_relisted():
     market.enrich([r], [], TODAY, content.POLICY["market_max_age_days"], sold=sold)   # без журнала рынка тоже работает
     assert r["market"]["torgi_level"] == "район" and "1 июля" in r["market"]["relisted"]
     assert "torgi_compare_note" in r["market"]
+
+
+def test_torgi_rubric(tmp_path):
+    """«Старт ниже итогов»: квартира в продаже против итогов в её доме; по адресу — один пост, без повторов."""
+    from parkan.track import torgi as tg
+    con = duckdb.connect(":memory:")
+    journal(con, tmp_path)                       # квартиры в продаже: «ул. Квартирная, 2» — 300 тыс. ₽/м²
+    res = tmp_path / "kv.csv"
+    rows = {}
+    for i in range(3):                            # в том же доме продали по 450 тыс. ₽/м²
+        rows[str(900 + i)] = {"tender_id": str(900 + i), "object_type": "квартира", "trades_date": "2026-09-20",
+                              "adm_area": "Центральный административный округ", "district": "район Хамовники",
+                              "address": "ул. Квартирная, 2", "space_m2": "50", "start_price": "20000000",
+                              "final_price": "22500000", "final_to_start": "1.125", "final_price_per_m2": "450000",
+                              "status": "Признаны состоявшимися", "checked_at": "2026-09-21 07:00"}
+    tg.save(res, rows)
+    posts = content.drafts(con, tmp_path, TODAY, results_path=res, rubrics=("torgi",))
+    assert [p.key for p in posts] == ["torgi:ул. Квартирная, 2"]
+    p = posts[0]
+    assert p.card["kicker"] == "СТАРТ НИЖЕ ИТОГОВ" and p.card["headline"] == "−33%"
+    assert p.card["headline_sub"] == "старт за м² к итогам торгов в этом доме"
+    mk = p.facts["facts"]["market"]
+    assert mk["torgi_level"] == "дом" and mk["below_torgi"] == "33 %" and "torgi_compare_note" in mk
+    assert "на аукционе она может вырасти" in p.text
+    assert content.drafts(con, tmp_path, TODAY, results_path=res, rubrics=("torgi",), registry={p.key: "x"}) == []
+    con.close()

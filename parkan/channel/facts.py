@@ -11,9 +11,10 @@ from datetime import timedelta
 from . import templates as t
 
 TITLES = {"lot": "Лот дня", "drop": "Снижение цены", "house": "Целый дом", "sold": "Продано дороже",
-          "nofight": "Без борьбы", "week": "Неделя вперёд", "weekstats": "Итоги недели"}
+          "nofight": "Без борьбы", "week": "Неделя вперёд", "weekstats": "Итоги недели",
+          "torgi": "Старт ниже итогов"}
 TAGS = {"lot": "#лотдня", "drop": "#снижение", "house": "#целыйдом", "sold": "#итоги", "nofight": "#безборьбы",
-        "week": "#неделявперёд", "weekstats": "#итогинедели"}
+        "week": "#неделявперёд", "weekstats": "#итогинедели", "torgi": "#стартнижеитогов"}
 
 
 def _clean(d: dict) -> dict:
@@ -46,6 +47,14 @@ def drop(r: dict) -> dict:
                  old_price=t.money(r["old_price"]), new_price=t.money(r["price"]), drop=f"{t.pct(r['drop'])} %",
                  area=t.area(r.get("space")), price_per_m2=_per_m2(r["price"], r.get("space")),
                  applications_until=t.day(r.get("end_d")), lot_url=r.get("url"), market=r.get("market"))
+
+
+def torgi(r: dict) -> dict:
+    """«Старт ниже итогов»: квартира в продаже и итоги торгов в её доме / районе (поле market, market.torgi_facts)."""
+    return _base("torgi", r["kind"], address=r["place"], district=t.district(r.get("district")),
+                 start_price=t.money(r["price"]), start_price_per_m2=_per_m2(r["price"], r.get("space")),
+                 area=t.area(r.get("space")), applications_until=t.day(r.get("end_d")),
+                 trades_date=t.day(r.get("trades_d")), lot_url=r.get("url"), market=r.get("market"))
 
 
 def house(r: dict) -> dict:

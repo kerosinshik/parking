@@ -252,7 +252,7 @@ def register(sub) -> None:
     sp.add_argument("--out", default="channel_out", help="куда сложить тексты и карточки (подпапка на дату)")
     sp.add_argument("--channel-state", default=os.environ.get("PARKAN_CHANNEL_STATE", "channel_state"),
                     help="состояние канала: что уже уходило в черновики")
-    sp.add_argument("--rubrics", help="lot,drop,house,sold,nofight,week,weekstats (по умолчанию всё, кроме week — по понедельникам "
+    sp.add_argument("--rubrics", help="lot,drop,house,sold,nofight,torgi,week,weekstats (по умолчанию всё, кроме week — по понедельникам "
                          "и weekstats — по пятницам)")
     sp.add_argument("--send", action="store_true", help="сразу отправить в кухню (без написанных текстов — шаблонные)")
     sp.add_argument("--chat", help="чат для черновиков (иначе TELEGRAM_DRAFT_CHAT)")
