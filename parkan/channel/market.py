@@ -385,7 +385,11 @@ def enrich(rows: list[dict], obs: list[dict], today: date, max_age_days, *, pric
             f.update(facts(c) or {}, **(city or {}))
         if sold:
             ref = torgi_reference(sold, r.get(district), r.get(adm), exclude=r.get(own_id) if own_id else None)
-            f.update(torgi_facts(ref, r.get(price), r.get(space)) or {})
+            tf = torgi_facts(ref, r.get(price), r.get(space))
+            if tf and not own_id:   # лот в продаже: сравниваем его старт с итогами — цена на аукционе ещё может вырасти
+                tf["torgi_compare_note"] = ("сравнивается стартовая цена лота с итоговыми ценами проданных квартир; "
+                                            "на аукционе цена может вырасти")
+            f.update(tf or {})
         if f:
             r["market"] = f
 
