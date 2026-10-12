@@ -11,7 +11,7 @@ from pathlib import Path
 from ..timeutil import now_msk
 from ..track import digest
 from ..track.commands import default_state_dir
-from . import content, copy, html_cards
+from . import content, copy, endings, html_cards
 from .telegram import Bot
 
 
@@ -46,16 +46,21 @@ def cmd_channel_draft(a, con) -> int:
         manifest.append({"key": p.key, "rubric": p.rubric, "facts": f"{stem}.facts.json", "template": f"{stem}.html",
                          "copy": f"{stem}.txt", "card": card.name if card else None, "sent": False})
     (out / "drafts.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+    endings.write_list(out / "endings.txt", endings.load(Path(a.channel_state) / "endings.json"))
     print(f"Черновиков: {len(posts)} ({', '.join(p.rubric for p in posts) or 'нечего предложить'}) → {out}")
     if a.send and posts:
         return send_dir(out, registry_path, a.chat, today)
     return 0
 
 
+DEFAULT_CHANNEL_URL = "https://t.me/poputny_metr"
+
+
 def with_signature(text: str) -> str:
     """Подпись-ссылка на канал в конце поста (PARKAN_CHANNEL_URL): в канале она не мешает, а при пересылке
-    поста в чат или другой канал ведёт читателя к нам. Ставит код, не автор текста, — одинаково везде."""
-    url = os.environ.get("PARKAN_CHANNEL_URL", "").strip()
+    поста в чат или другой канал ведёт читателя к нам. Ставит код, не автор текста, — одинаково везде.
+    PARKAN_CHANNEL_URL="" отключает подпись."""
+    url = os.environ.get("PARKAN_CHANNEL_URL", DEFAULT_CHANNEL_URL).strip()
     if not url or url in text:
         return text
     from html import escape
@@ -63,12 +68,17 @@ def with_signature(text: str) -> str:
     return f'{text}\n\n<a href="{escape(url, quote=True)}">{escape(channel_name())}</a>'
 
 
-def _text_for(day: Path, m: dict) -> tuple[str, str]:
+def _used_endings(state_dir) -> list[str]:
+    return [u["text"] for u in endings.load(Path(state_dir) / "endings.json")] + endings.skill_examples()
+
+
+def _text_for(day: Path, m: dict, used: list[str]) -> tuple[str, str]:
     """Текст поста: написанный (.txt), если прошёл проверку, иначе шаблонный. Второе — откуда он."""
     copy_path = day / m["copy"]
     if copy_path.exists():
         text = copy_path.read_text(encoding="utf-8").strip()
-        problems = copy.check(text, copy.load_facts(day / m["facts"]), with_card=bool(m.get("card")))
+        problems = copy.check(text, copy.load_facts(day / m["facts"]), with_card=bool(m.get("card")),
+                              used_endings=used)
         if not problems:
             return text, "написан"
         print(f"  {m['key']}: текст не прошёл проверку ({'; '.join(problems)}) — уйдёт шаблонный", file=sys.stderr)
@@ -84,11 +94,12 @@ def send_dir(day: Path, registry_path: Path, chat: str | None, today: date) -> i
     manifest_path = day / "drafts.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     bot = Bot(os.environ.get("TELEGRAM_BOT_TOKEN", ""))
-    sent, failed, how = [], 0, []
+    sent, failed, how, new_endings = [], 0, [], []
+    used = _used_endings(registry_path.parent)
     for m in manifest:
         if m.get("sent"):
             continue
-        text, source = _text_for(day, m)
+        text, source = _text_for(day, m, used + new_endings)
         text = with_signature(text)
         try:
             bot.send_post(chat, text, day / m["card"] if m.get("card") else None)
@@ -99,8 +110,12 @@ def send_dir(day: Path, registry_path: Path, chat: str | None, today: date) -> i
         m["sent"] = True
         sent.append(m["key"])
         how.append(source)
+        last = endings.ending(copy.visible(text.rsplit("\n\n<a href", 1)[0])) if source == "написан" else None
+        if last:
+            new_endings.append(last)
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
     digest.mark_sent(registry_path, sent, today, keep_days=120)
+    endings.record(registry_path.parent / "endings.json", new_endings, today)
     print(f"Отправлено в черновики: {len(sent)} (написанных текстов: {how.count('написан')}, "
           f"шаблонных: {how.count('шаблон')}), ошибок: {failed}")
     return 1 if failed else 0
@@ -123,13 +138,17 @@ def cmd_channel_lint(a, con) -> int:
     """Проверка написанных текстов папки дня: цифры только из фактов, разметка, длина."""
     day = _day_dir(a)
     bad = 0
+    used = _used_endings(a.channel_state)
     for m in json.loads((day / "drafts.json").read_text(encoding="utf-8")):
         copy_path = day / m["copy"]
         if not copy_path.exists():
             print(f"{m['copy']}: текста нет — уйдёт шаблонный")
             continue
-        problems = copy.check(copy_path.read_text(encoding="utf-8"), copy.load_facts(day / m["facts"]),
-                              with_card=bool(m.get("card")))
+        text = copy_path.read_text(encoding="utf-8")
+        problems = copy.check(text, copy.load_facts(day / m["facts"]), with_card=bool(m.get("card")), used_endings=used)
+        last = endings.ending(copy.visible(text))
+        if last:
+            used = used + [last]   # концовки внутри одного дня тоже не должны повторяться
         bad += bool(problems)
         print(f"{m['copy']}: " + ("в порядке" if not problems else "; ".join(problems)))
     return 1 if bad else 0

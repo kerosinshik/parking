@@ -273,12 +273,30 @@ def test_channel_send_uses_written_text_and_falls_back(con, tmp_path, monkeypatc
     assert any("Написанный текст" in b for b in bodies) and not any("Выдумка" in b for b in bodies)
     t.calls.clear()
     assert main(["channel-send", *base]) == 0 and t.calls == []      # уже отправленное не повторяется
+    assert (day / "endings.txt").exists()
     assert set(json.loads((tmp_path / "ch" / "drafted.json").read_text())) == {m["key"] for m in manifest}
 
 
 def test_signature_link(monkeypatch):
     from parkan.channel.commands import with_signature
     monkeypatch.delenv("PARKAN_CHANNEL_URL", raising=False)
-    assert with_signature("Текст") == "Текст"
-    monkeypatch.setenv("PARKAN_CHANNEL_URL", "https://t.me/poputny_metr")
     assert with_signature("Текст").endswith('\n\n<a href="https://t.me/poputny_metr">Попутный Метр</a>')
+    monkeypatch.setenv("PARKAN_CHANNEL_URL", "")
+    assert with_signature("Текст") == "Текст"
+
+
+def test_endings_never_repeat(tmp_path):
+    from parkan.channel import copy, endings
+    assert endings.similar("Город, похоже, и сам удивился.", "Похоже, город и сам удивился")
+    assert endings.similar("Выбирать соседей по паркингу ещё никогда не было так просто.",
+                           "Выбирать соседей по подъезду ещё никогда не было так просто")
+    assert not endings.similar("Город, похоже, и сам удивился.", "Квартиры даром не отдают — даже город.")
+    assert "Город, похоже, и сам удивился." in endings.skill_examples()
+    text = "<b>Заход</b>\n\nТекст поста.\n\nГород, похоже, и сам удивился."
+    assert any("концовка повторяет" in p for p in copy.check(text, {}, used_endings=endings.skill_examples()))
+    assert copy.check(text.replace("Город, похоже, и сам удивился.", "Метр дешевле, а сдачи не будет."), {},
+                      used_endings=endings.skill_examples()) == []
+    log = tmp_path / "endings.json"
+    endings.record(log, ["Метр дешевле, а сдачи не будет."], date(2026, 10, 12))
+    endings.write_list(tmp_path / "endings.txt", endings.load(log))
+    assert "2026-10-12  Метр дешевле, а сдачи не будет." in (tmp_path / "endings.txt").read_text(encoding="utf-8")

@@ -70,8 +70,8 @@ def visible(text: str) -> str:
     return "".join(p.text)
 
 
-def check(text: str, facts: dict, with_card: bool = True) -> list[str]:
-    """Список проблем; пустой — текст можно отправлять."""
+def check(text: str, facts: dict, with_card: bool = True, used_endings: list[str] | None = None) -> list[str]:
+    """Список проблем; пустой — текст можно отправлять. used_endings — уже использованные концовки."""
     problems = []
     if not text.strip():
         return ["пустой текст"]
@@ -99,6 +99,11 @@ def check(text: str, facts: dict, with_card: bool = True) -> list[str]:
         problems.append("хэштеги не ставим")
     if EMOJI.search(shown):
         problems.append("эмодзи не ставим")
+    if used_endings:
+        from .endings import clashes, ending
+        last = ending(shown)
+        for u in clashes(last, used_endings) if last else []:
+            problems.append(f"концовка повторяет уже использованную: «{u}»")
     for url in re.findall(r'href="([^"]*)"', text):
         if url not in set(_strings(facts)):
             problems.append(f"ссылка не из фактов: {url}")
