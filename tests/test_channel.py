@@ -231,3 +231,45 @@ def test_html_card_renders(tmp_path):
                                     "district": "Бескудниковский район"}), tmp_path / "c.png")
     im = Image.open(out)
     assert im.size == (1080, 1080) and im.getpixel((5, 5)) == (14, 59, 46)   # фон #0E3B2E
+
+
+def test_copy_check_numbers_links_markup_length():
+    from parkan.channel import copy
+    facts = {"facts": {"price": "1,29 млн ₽", "discount": "44 %", "applications_until": "9 ноября",
+                       "lot_url": "https://torgi.mos.ru/tender/1"}}
+    ok = '<b>Место почти вдвое дешевле</b>\nЦена 1,29 млн ₽, на 44 % ниже медианы, в доме 3 места.\n' \
+         '<a href="https://torgi.mos.ru/tender/1">лот</a>'
+    assert copy.check(ok, facts) == []
+    bad = '<b>Ниже рынка на 50 %</b> <p>цена 1,3 млн</p> <a href="https://evil.test">лот</a>'
+    problems = copy.check(bad, facts)
+    assert any("50 не из фактов" in p for p in problems) and any("1.3 не из фактов" in p for p in problems)
+    assert any("<p>" in p for p in problems) and any("evil.test" in p for p in problems)
+    assert any("не закрыты" in p for p in copy.check("<b>текст", facts))
+    assert any("лимит 1024" in p for p in copy.check("а" * 1100, facts))
+    assert copy.check("а" * 1100, facts, with_card=False) == []
+
+
+def test_channel_send_uses_written_text_and_falls_back(con, tmp_path, monkeypatch):
+    from parkan.cli import main
+    journal(con, tmp_path / "state")
+    t = FakeTransport()
+    monkeypatch.setattr(telegram, "urllib_transport", t)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "T")
+    monkeypatch.setenv("TELEGRAM_DRAFT_CHAT", "@kitchen")
+    base = ["--out", str(tmp_path / "out"), "--channel-state", str(tmp_path / "ch"), "--today", "2026-10-06"]
+    assert main(["channel-draft", "--state-dir", str(tmp_path / "state"), "--rubrics", "lot", *base]) == 0
+    day = tmp_path / "out" / "2026-10-06"
+    manifest = json.loads((day / "drafts.json").read_text(encoding="utf-8"))
+    first, second = manifest[0], manifest[1]
+    facts = json.loads((day / first["facts"]).read_text(encoding="utf-8"))
+    assert facts["rubric"] == "lot" and facts["facts"]["discount"] == "40 %"
+    (day / first["copy"]).write_text(f"<b>Написанный текст</b>\nСкидка {facts['facts']['discount']}.\n"
+                                     + " ".join(facts["hashtags"]), encoding="utf-8")
+    (day / second["copy"]).write_text("<b>Выдумка</b> на 77 %", encoding="utf-8")
+    assert main(["channel-lint", *base]) == 1                        # второй текст с чужим числом
+    assert main(["channel-send", *base]) == 0
+    bodies = [b.decode("utf-8", "ignore") for _, b in t.calls]
+    assert any("Написанный текст" in b for b in bodies) and not any("Выдумка" in b for b in bodies)
+    t.calls.clear()
+    assert main(["channel-send", *base]) == 0 and t.calls == []      # уже отправленное не повторяется
+    assert set(json.loads((tmp_path / "ch" / "drafted.json").read_text())) == {m["key"] for m in manifest}

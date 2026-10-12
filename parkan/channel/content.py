@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from ..track import digest
-from . import lots, templates
+from . import facts, lots, templates
 
 # Редакционная политика канала. Отдельно от порогов сводки Trello: их можно менять независимо.
 POLICY = {
@@ -50,6 +50,7 @@ class Post:
     repeat_days: int = 0        # совместимость с digest.unsent
     score: float = 0.0
     card_path: object = None    # готовая карточка (заполняет channel-draft)
+    facts: dict | None = None   # факты для автора текста (facts.py, навык channel-copy)
 
 
 def _mix(items: list, n: int) -> list:
@@ -67,17 +68,17 @@ def _mix(items: list, n: int) -> list:
 
 def lot_posts(con, state_dir, today, policy=POLICY) -> list[Post]:
     return [Post(f"lot:{r['kind']}:{r['address']}:{r['end_d']}", "lot", templates.lot(r), templates.lot_card(r),
-                 score=r["discount"]) for r in lots.new_deals(con, state_dir, today, policy["lot_min_discount"])]
+                 score=r["discount"], facts=facts.lot(r)) for r in lots.new_deals(con, state_dir, today, policy["lot_min_discount"])]
 
 
 def drop_posts(con, state_dir, today, policy=POLICY) -> list[Post]:
     return [Post(f"drop:{r['record_id']}:{r['price']:.0f}", "drop", templates.drop(r), templates.drop_card(r),
-                 score=r["drop"]) for r in lots.price_drops(con, state_dir, today, policy["drop_min"])]
+                 score=r["drop"], facts=facts.drop(r)) for r in lots.price_drops(con, state_dir, today, policy["drop_min"])]
 
 
 def house_posts(con, state_dir, today, policy=POLICY) -> list[Post]:
     return [Post(f"house:{r['kind']}:{r['address']}:{r['end_d']}", "house", templates.house(r), templates.house_card(r),
-                 score=r["n"]) for r in lots.new_houses(con, state_dir, today, policy["house_min_lots"])]
+                 score=r["n"], facts=facts.house(r)) for r in lots.new_houses(con, state_dir, today, policy["house_min_lots"])]
 
 
 def _recent(results: list[dict], today: date, days: int) -> list[dict]:
@@ -94,7 +95,7 @@ def sold_posts(results: list[dict], today: date, policy=POLICY) -> list[Post]:
         if r.get("address") not in seen:
             seen.add(r.get("address"))
             out.append(Post(f"result:{r['tender_id']}", "sold", templates.sold(r), templates.sold_card(r),
-                            score=r["final_to_start"]))
+                            score=r["final_to_start"], facts=facts.sold(r)))
     return out
 
 
@@ -108,14 +109,15 @@ def nofight_posts(results: list[dict], today: date, policy=POLICY) -> list[Post]
     for g in sorted(groups.values(), key=lambda g: -max(r["final_price"] for r in g)):
         top = max(g, key=lambda r: r["final_price"])
         out.append(Post(f"nofight:{top['tender_id']}", "nofight", templates.nofight(top, len(g) - 1),
-                        templates.nofight_card(top, len(g) - 1), score=top["final_price"]))
+                        templates.nofight_card(top, len(g) - 1), score=top["final_price"],
+                        facts=facts.nofight(top, len(g) - 1)))
     return out
 
 
 def week_posts(con, today: date, policy=POLICY) -> list[Post]:
     y, w, _ = today.isocalendar()
     return [Post(f"week:{kind}:{y}-W{w:02d}", "week", templates.week(kind, ls, today),
-                 templates.week_card(kind, ls, today), score=1.0)
+                 templates.week_card(kind, ls, today), score=1.0, facts=facts.week(kind, ls, today))
             for kind, ls in lots.week_ahead(con, today, policy["week_min_discount"], policy["week_lots"]).items()
             if len(ls) >= policy["week_min_lots"]]
 
@@ -142,7 +144,7 @@ def weekstats_posts(results: list[dict], today: date, policy=POLICY) -> list[Pos
         if not st["sold"]:
             continue
         out.append(Post(f"weekstats:{kind}:{y}-W{w:02d}", "weekstats", templates.weekstats(kind, st),
-                        templates.weekstats_card(kind, st), score=st["sold"]))
+                        templates.weekstats_card(kind, st), score=st["sold"], facts=facts.weekstats(kind, st)))
     return out
 
 
