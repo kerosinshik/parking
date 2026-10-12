@@ -16,7 +16,7 @@ EDITOR = "✏️ <i>ваш комментарий</i>"
 
 
 def channel_name() -> str:
-    return os.environ.get("PARKAN_CHANNEL_NAME", "Торги Москвы")
+    return os.environ.get("PARKAN_CHANNEL_NAME", "Попутный Метр")
 
 
 def mln(v) -> str:

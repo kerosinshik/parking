@@ -130,7 +130,7 @@ def test_card_renders(tmp_path):
     from PIL import Image
     card = {"label": "ЛОТ ДНЯ", "big": "−40 %", "sub": "1,20 млн ₽ при медиане района 2,00 млн ₽",
             "place": "очень длинный адрес " * 8, "district": "Пресненский", "badge": "заявки до 09.10.2026"}
-    out = cards.render(card, tmp_path / "c.png", "Торги Москвы")
+    out = cards.render(card, tmp_path / "c.png", "Попутный Метр")
     assert Image.open(out).size == (cards.W, cards.H)
 
 
