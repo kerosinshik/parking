@@ -37,7 +37,8 @@ POLICY = {
     "week_weekday": 0,          # понедельник
     "weekstats_weekday": 4,     # пятница
     "weekstats_min": 3,         # итогов за неделю по типу, чтобы был пост
-    "market_max_age_days": 60,  # рыночный ориентир старше — не показываем (журнал market-add)
+    # рыночный ориентир старше — не показываем (журнал market-add); Росстат по Москве — раз в квартал
+    "market_max_age_days": {"район": 60, "округ": 60, "город": 200},
 }
 RUBRICS = ("lot", "drop", "house", "sold", "nofight", "week", "weekstats")
 

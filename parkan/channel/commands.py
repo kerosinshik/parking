@@ -1,4 +1,4 @@
-"""Команды CLI канала: channel-draft, channel-send, channel-lint, channel-check, market-add, market-status, market-page."""
+"""Команды CLI канала: channel-draft, channel-send, channel-lint, channel-check, market-add, market-status, market-rosstat, market-page."""
 
 from __future__ import annotations
 
@@ -213,11 +213,26 @@ def cmd_market_status(a, con) -> int:
                             "ORDER BY district").fetchall()
     age = content.POLICY["market_max_age_days"]
     cov = market.coverage(obs, districts, today, age)
-    print(f"Районов с квартирами в продаже: {len(districts)}; свежий (≤ {age} дн.) ориентир по району — "
+    print(f"Районов с квартирами в продаже: {len(districts)}; свежий (≤ {age['район']} дн.) ориентир по району — "
           f"{len(cov['район'])}, по округу — {len(cov['округ'])}, по Москве — {len(cov['город'])}, нет — {len(cov['нет'])}")
     need = cov["нет"] + cov["округ"] + cov["город"]
     if need:
         print("Собрать по районам: " + ", ".join(templates.district(d) for d in need))
+    return 0
+
+
+def cmd_market_rosstat(a, con) -> int:
+    """Средние цены на рынке жилья Москвы от Росстата (квартальные XLSX) → журнал рынка."""
+    from . import rosstat
+    today = date.fromisoformat(a.today) if a.today else now_msk().date()
+    rows = rosstat.collect()
+    added, dup, errors = market.add(a.market, rows, today)
+    for e in errors:
+        print(e, file=sys.stderr)
+    if errors:
+        return 1
+    last = max((r["observed"] for r in rows), default=None)
+    print(f"Росстат: строк {len(rows)} (последний квартал — на {last}), добавлено {added}, уже были {dup} → {a.market}")
     return 0
 
 
@@ -280,3 +295,8 @@ def register(sub) -> None:
     sp.add_argument("--out", default="data/market.html")
     sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней")
     sp.set_defaults(fn=cmd_market_page, track=True)
+
+    sp = sub.add_parser("market-rosstat", help="средние цены на жильё в Москве от Росстата → журнал рынка")
+    sp.add_argument("--market", default=os.environ.get("PARKAN_MARKET", market.DEFAULT_PATH), help="журнал рынка")
+    sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней")
+    sp.set_defaults(fn=cmd_market_rosstat, track=True)

@@ -21,10 +21,12 @@ from pathlib import Path
 
 from . import templates as t
 
-FIELDS = ("observed", "level", "area", "segment", "rooms", "metric", "value", "source", "url", "n", "note", "added")
+FIELDS = ("observed", "level", "area", "segment", "rooms", "quality", "metric", "value", "source", "url", "n", "note",
+          "added")
 LEVELS = ("район", "округ", "город")
 SEGMENTS = ("вторичка", "новостройки", "все")
 ROOMS = ("все", "студия", "1", "2", "3", "4+")
+QUALITY = ("все", "низкого качества", "типовые", "улучшенные", "элитные")   # как у Росстата
 # метрика → (что это, правдоподобный диапазон ₽): защита от лишнего нуля и перепутанных столбцов
 METRICS = {
     "sale_m2": ("цена продажи за м²", 50_000, 3_000_000),
@@ -109,6 +111,8 @@ def validate(row: dict, today: date) -> list[str]:
         p.append(f"segment — одно из: {', '.join(SEGMENTS)}")
     if (row.get("rooms") or "все").strip() not in ROOMS:
         p.append(f"rooms — одно из: {', '.join(ROOMS)}")
+    if (row.get("quality") or "все").strip() not in QUALITY:
+        p.append(f"quality — одно из: {', '.join(QUALITY)}")
     metric = (row.get("metric") or "").strip()
     if metric not in METRICS:
         p.append(f"metric — одно из: {', '.join(METRICS)}")
@@ -134,6 +138,7 @@ def _clean(row: dict, today: date) -> dict:
     out["value"] = str(round(float(out["value"].replace(" ", "").replace(",", "."))))
     out["segment"] = out["segment"] or "все"
     out["rooms"] = out["rooms"] or "все"
+    out["quality"] = out["quality"] or "все"
     out["observed"] = _date(out["observed"]).isoformat()
     if out["level"] == "округ":
         out["area"] = okrug_key(out["area"])
@@ -145,7 +150,8 @@ def _clean(row: dict, today: date) -> dict:
 
 def _ident(r: dict) -> tuple:
     return (str(r.get("observed"))[:10], r["level"], area_key(r["level"], r["area"]), r.get("segment") or "все",
-            r.get("rooms") or "все", r["metric"], r["source"].strip().lower(), str(round(float(r["value"]))))
+            r.get("rooms") or "все", r.get("quality") or "все", r["metric"], r["source"].strip().lower(),
+            str(round(float(r["value"]))))
 
 
 def add(path, new_rows: list[dict], today: date) -> tuple[int, int, list[str]]:
@@ -196,17 +202,24 @@ def read_rows(path) -> list[dict]:
 
 # ---------------------------------------------------------------- ориентир для лота
 
+def _age(max_age_days, level: str) -> int:
+    return max_age_days.get(level, 0) if isinstance(max_age_days, dict) else max_age_days
+
+
 def reference(obs: list[dict], metric: str, district: str | None, adm: str | None, today: date,
-              max_age_days: int, segment: str = "вторичка") -> dict | None:
-    """Самое свежее наблюдение: район → округ → Москва. Сегмент «все» подходит, если нужного нет."""
+              max_age_days, segment: str = "вторичка", levels=LEVELS) -> dict | None:
+    """Самое свежее наблюдение: район → округ → Москва. Сегмент «все» подходит, если нужного нет.
+
+    max_age_days — число или {уровень: дней}: квартальные цифры по Москве живут дольше месячных по районам."""
     targets = [("район", _norm(district) if district else None), ("округ", okrug_key(adm)), ("город", CITY)]
     for seg in (segment, "все"):
         for level, key in targets:
-            if not key:
+            if not key or level not in levels:
                 continue
             hits = [o for o in obs if o["metric"] == metric and o.get("level") == level and o["key"] == key
                     and (o.get("segment") or "все") == seg and (o.get("rooms") or "все") == "все"
-                    and o["observed"] and 0 <= (today - o["observed"]).days <= max_age_days]
+                    and (o.get("quality") or "все") == "все"
+                    and o["observed"] and 0 <= (today - o["observed"]).days <= _age(max_age_days, level)]
             if hits:
                 # свежее — лучше; на одну дату — последняя добавленная (поправка)
                 return max(enumerate(hits), key=lambda x: (x[1]["observed"], x[0]))[1]
@@ -244,6 +257,29 @@ def _seg(o: dict) -> str:
     return {"вторичка": "вторичного жилья", "новостройки": "новостроек"}.get(o.get("segment") or "", "жилья")
 
 
+def _what(o: dict) -> str:
+    if o["source"].lower().startswith("росстат"):
+        return f"средняя цена квадратного метра {_seg(o)} {_where(o)} по данным Росстата (на конец квартала)"
+    return f"средняя цена квадратного метра {_seg(o)} в объявлениях {_where(o)}"
+
+
+def city_facts(obs: list[dict], today: date, max_age_days) -> dict | None:
+    """Фон по Москве (Росстат): средняя цена м² на вторичке, в том числе типовых квартир. Без расчёта выгоды:
+    средняя по городу смешивает центр и окраины, и «ниже рынка на 40 %» для квартиры в Некрасовке было бы враньём."""
+    sale = reference(obs, "sale_m2", None, None, today, max_age_days, levels=("город",))
+    if not sale:
+        return None
+    typical = [o for o in obs if o["metric"] == "sale_m2" and o["level"] == "город" and o.get("quality") == "типовые"
+               and o.get("segment") == sale.get("segment") and o["observed"] == sale["observed"]
+               and o["source"] == sale["source"]]
+    f = {"moscow_price_per_m2": f"{t.rub(sale['value'])}/м²", "moscow_what": _what(sale),
+         "moscow_source": sale["source"], "moscow_period": sale.get("note") or _month(sale["observed"]),
+         "moscow_url": sale.get("url") or None,
+         "moscow_typical_per_m2": f"{t.rub(typical[-1]['value'])}/м²" if typical else None,
+         "moscow_caveat": "средняя по всей Москве: с конкретной квартирой не сравнивать, только как фон"}
+    return {k: v for k, v in f.items() if v}
+
+
 def facts(c: dict | None) -> dict | None:
     """Факты сравнения с рынком для поста: всё уже в формате канала, с источником и оговорками."""
     if not c:
@@ -251,7 +287,7 @@ def facts(c: dict | None) -> dict | None:
     s = c["sale"]
     f = {
         "market_price_per_m2": f"{t.rub(c['market_m2'])}/м²",
-        "market_what": f"средняя цена квадратного метра {_seg(s)} в объявлениях {_where(s)}",
+        "market_what": _what(s),
         "market_source": s["source"], "market_month": _month(s["observed"]), "market_url": s.get("url") or None,
         "lot_price_per_m2": f"{t.rub(c['price_m2'])}/м²",
     }
@@ -277,13 +313,17 @@ def enrich(rows: list[dict], obs: list[dict], today: date, max_age_days: int, *,
     """Добавляет к строкам-квартирам r['market'] — факты сравнения с рынком (если есть ориентир)."""
     if not obs:
         return
+    local = ("район", "округ")   # сравнение с лотом — только по району или округу, Москва — фоном
+    city = city_facts(obs, today, max_age_days)
     for r in rows:
         if r.get("kind") != "flat":
             continue
         args = (r.get(district), r.get(adm), today, max_age_days)
-        c = compare(r.get(price), r.get(space), reference(obs, "sale_m2", *args), reference(obs, "rent_m2_month", *args))
-        if c:
-            r["market"] = facts(c)
+        c = compare(r.get(price), r.get(space), reference(obs, "sale_m2", *args, levels=local),
+                    reference(obs, "rent_m2_month", *args, levels=local))
+        f = dict(facts(c) or {}, **(city or {}))
+        if f:
+            r["market"] = f
 
 
 def coverage(obs: list[dict], districts: list[str], today: date, max_age_days: int) -> dict:

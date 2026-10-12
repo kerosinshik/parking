@@ -21,7 +21,8 @@ from .content import POLICY
 
 
 def _ref(obs, metric, district, adm, today, age):
-    r = market.reference(obs, metric, district, adm, today, age)
+    # с лотами сравниваем только район и округ: средняя по Москве смешивает центр и окраины (она — фоном, city)
+    r = market.reference(obs, metric, district, adm, today, age, levels=("район", "округ"))
     return {"value": r["value"], "level": r["level"], "observed": r["observed"].isoformat(), "source": r["source"],
             "url": r.get("url") or None} if r else None
 
@@ -31,7 +32,7 @@ def _med(xs):
     return statistics.median(xs) if xs else None
 
 
-def collect(con, state_dir, today: date, market_path=None, results_path=None, age: int | None = None) -> dict:
+def collect(con, state_dir, today: date, market_path=None, results_path=None, age=None) -> dict:
     age = age or POLICY["market_max_age_days"]
     obs = market.load(market_path)
     have = lots.load(con, state_dir, today)
@@ -89,13 +90,23 @@ def collect(con, state_dir, today: date, market_path=None, results_path=None, ag
 
     journal = [{"observed": o["observed"].isoformat() if o["observed"] else None, "level": o["level"],
                 "area": t.district(o["area"]), "segment": o.get("segment"), "rooms": o.get("rooms"),
+                "quality": o.get("quality"),
                 "metric": market.METRICS.get(o["metric"], (o["metric"],))[0], "value": o["value"],
                 "source": o["source"], "url": o.get("url") or None, "added": o.get("added"), "note": o.get("note")}
                for o in reversed(obs)]
+    city = []   # фон по Москве: последний период каждого источника и сегмента, все квартиры и по качеству
+    for (src, seg), _ in sorted({(o["source"], o.get("segment")): 1 for o in obs if o["level"] == "город"
+                                 and o["metric"] == "sale_m2"}.items()):
+        rows = [o for o in obs if o["level"] == "город" and o["metric"] == "sale_m2" and o["source"] == src
+                and o.get("segment") == seg and o["observed"]]
+        last = max(o["observed"] for o in rows)
+        city.append({"source": src, "segment": seg, "observed": last.isoformat(), "note": rows[-1].get("note"),
+                     "url": rows[-1].get("url") or None,
+                     "values": {o.get("quality") or "все": o["value"] for o in rows if o["observed"] == last}})
     cov = {"район": 0, "округ": 0, "город": 0, "нет": 0}
     for d in districts:
         cov[d["market"]["level"] if d["market"] else "нет"] += 1
-    return {"today": today.isoformat(), "generated": now_msk().strftime("%d.%m.%Y %H:%M"), "age": age,
+    return {"today": today.isoformat(), "generated": now_msk().strftime("%d.%m.%Y %H:%M"), "age": age["район"] if isinstance(age, dict) else age, "city": city,
             "have_lots": have, "flats": flats, "districts": districts, "okrugs": okrugs, "results": results,
             "journal": journal, "coverage": cov,
             "sources": sorted({o["source"] for o in obs}),
@@ -173,11 +184,18 @@ function overview() {
   const tiles = [
     ["Квартир в продаже", D.flats.length, "Москва и Новая Москва, № 1461"],
     ["Районов", D.districts.length, `с ориентиром по району — ${c["район"]}`],
-    ["Сравнимы с рынком", withMkt.length, withMkt.length ? `ниже объявлений — ${below.length}` : "журнал рынка пуст"],
+    ["Сравнимы с рынком", withMkt.length, withMkt.length ? `ниже рынка района — ${below.length}` : (D.journal.length ? "нет цен по районам и округам" : "журнал рынка пуст")],
     ["Медиана ₽/м² лотов", k(median(D.flats.map(f => f.base))), "стартовая цена"],
     ["Итогов квартир", D.results.length, D.results.length ? "из таблиц track-torgi" : "таблица итогов не задана"],
   ];
   let h = `<div class="tiles">${tiles.map(([a, b, c]) => `<div class="tile"><div class="k">${a}</div><div class="v">${b}</div><div class="h">${c}</div></div>`).join("")}</div>`;
+  if (D.city.length) h += `<div class="card"><h2>Фон по Москве</h2><p class="note">Средняя цена м² по всему городу — с конкретной
+    квартирой не сравниваем (смешивает центр и окраины), только для общего фона.</p><div class="scroll"><table><thead><tr>
+    <th class="l">Сегмент</th><th>Все квартиры</th><th>Типовые</th><th>Улучшенные</th><th>Элитные</th><th class="l">Источник</th></tr></thead><tbody>
+    ${D.city.map(c => `<tr><td class="l">${esc(c.segment)}</td><td>${k(c.values["все"])}</td><td>${k(c.values["типовые"])}</td>
+      <td>${k(c.values["улучшенные"])}</td><td>${k(c.values["элитные"])}</td>
+      <td class="l">${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.source)}</a>` : esc(c.source)}, ${esc(c.note || day(c.observed))}</td></tr>`).join("")}
+    </tbody></table></div></div>`;
   if (!D.journal.length) h += `<div class="card warn"><h2>Журнал рынка пуст</h2><p class="note">Сравнение с рынком появится после
     <code>parkan market-add --file new.csv</code>. Пока на странице — только данные торгов. Колонки и правила — docs/channel.md, раздел «Рынок».</p></div>`;
   h += `<div class="card"><h2>Цена м² по округам: торги и объявления</h2>
@@ -273,7 +291,7 @@ function journalTab() {
   $("#tab-journal").innerHTML = `<div class="card"><h2>Наблюдения (${J.length})</h2><p class="note">Свежие сверху. Добавление — <code>parkan market-add</code>;
     строки не правятся, поправка — новая строка.</p>${J.length ? `<div class="scroll tall"><table><thead><tr><th>Дата</th><th class="l">Уровень</th><th class="l">Где</th>
     <th class="l">Сегмент</th><th class="l">Метрика</th><th>Значение</th><th class="l">Источник</th><th>Добавлено</th><th class="l">Заметка</th></tr></thead><tbody>
-    ${J.map(o => `<tr><td>${day(o.observed)}</td><td class="l">${esc(o.level)}</td><td class="l">${esc(o.area)}</td><td class="l">${esc(o.segment)}${o.rooms && o.rooms !== "все" ? ", " + esc(o.rooms) : ""}</td>
+    ${J.map(o => `<tr><td>${day(o.observed)}</td><td class="l">${esc(o.level)}</td><td class="l">${esc(o.area)}</td><td class="l">${esc(o.segment)}${o.rooms && o.rooms !== "все" ? ", " + esc(o.rooms) : ""}${o.quality && o.quality !== "все" ? ", " + esc(o.quality) : ""}</td>
       <td class="l">${esc(o.metric)}</td><td>${rub(o.value)}</td><td class="l">${o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener">${esc(o.source)}</a>` : esc(o.source)}</td>
       <td>${day(o.added)}</td><td class="l">${esc(o.note || "")}</td></tr>`).join("")}</tbody></table></div>` : `<p class="empty">Пока пусто.</p>`}</div>`;
 }

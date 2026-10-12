@@ -135,3 +135,68 @@ def test_market_page(tmp_path):
     assert data["coverage"] == {"район": 1, "округ": 0, "город": 0, "нет": 0}
     cheap = next(f for f in data["flats"] if f["place"] == "ул. Квартирная, 2")
     assert cheap["gap"] == pytest.approx(0.4) and data["okrugs"][0]["market"]["value"] == 550000
+
+
+def _xlsx(rows: list[list]) -> bytes:
+    """Минимальный XLSX: лист «Содержание» и лист с данными (строки инлайн), как у Росстата."""
+    import io
+    import zipfile
+
+    def cell(r, c, v):
+        ref = chr(65 + c) + str(r)
+        if isinstance(v, (int, float)):
+            return f'<c r="{ref}"><v>{v}</v></c>'
+        return f'<c r="{ref}" t="inlineStr"><is><t>{v}</t></is></c>'
+
+    def sheet(data):
+        body = "".join(f'<row r="{i}">' + "".join(cell(i, j, v) for j, v in enumerate(r) if v is not None) + "</row>"
+                       for i, r in enumerate(data, 1))
+        return ('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+                + body + "</sheetData></worksheet>")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("xl/worksheets/sheet1.xml", sheet([["Содержание:"]]))
+        z.writestr("xl/worksheets/sheet2.xml", sheet(rows))
+    return buf.getvalue()
+
+
+ROSSTAT_ROWS = [
+    ["К содержанию", "Средние цены на вторичном рынке жилья"],
+    [None, "I квартал", None, None, None, None, "II квартал"],
+    [None, "Все типы квартир", "низкого качества", "квартиры среднего качества (типовые)", "улучшенного качества",
+     "элитные квартиры", "Все типы квартир", "низкого качества", "квартиры среднего качества (типовые)",
+     "улучшенного качества", "элитные квартиры"],
+    ["643 - Российская Федерация", 143953.4, 89573.37, 118114.82, 163949.83, 293868.03, 146469.57, 1, 2, 3, 4],
+    ["45000000000 - Город Москва столица Российской Федерации город федерального значения",
+     381296.64, "-", 311211.84, 369552.98, 562891.71, 391066.76, "-", 333154.95, 372122.56, 587926.32],
+]
+
+
+def test_rosstat_parse_and_city_background(tmp_path):
+    from parkan.channel import rosstat
+    page = ('<a href="/storage/mediabank/sred_cen_perv_2kv-2026.xlsx">x</a>'
+            '<a href="/storage/mediabank/sred_cen_vtor_2kv-2026.xlsx">x</a>'
+            '<a href="/storage/mediabank/sred_cen_vtor_4kv-2025.xlsx">x</a>')
+    assert rosstat.latest_files(page)["vtor"].endswith("sred_cen_vtor_2kv-2026.xlsx")
+    rows = rosstat.parse(_xlsx(ROSSTAT_ROWS), "вторичка", 2026, "https://rosstat.gov.ru/x.xlsx")
+    assert [(r["observed"], r["quality"], r["value"]) for r in rows] == [
+        ("2026-03-31", "все", "381297"), ("2026-03-31", "типовые", "311212"), ("2026-03-31", "улучшенные", "369553"),
+        ("2026-03-31", "элитные", "562892"), ("2026-06-30", "все", "391067"), ("2026-06-30", "типовые", "333155"),
+        ("2026-06-30", "улучшенные", "372123"), ("2026-06-30", "элитные", "587926")]
+    log = tmp_path / "obs.csv"
+    assert market.add(log, rows, TODAY) == (8, 0, [])
+    obs = market.load(log)
+    age = content.POLICY["market_max_age_days"]
+    # с лотом Москву не сравниваем: только фон, без «ниже рынка» и выгоды
+    r = {"kind": "flat", "price": 10_000_000, "space": 50, "district": "район Некрасовка",
+         "adm": "Юго-Восточный административный округ"}
+    market.enrich([r], obs, TODAY, age)
+    assert r["market"]["moscow_price_per_m2"] == "391 067 ₽/м²" and r["market"]["moscow_typical_per_m2"] == "333 155 ₽/м²"
+    assert "below_market" not in r["market"] and "gross_gain" not in r["market"]
+    assert "по данным Росстата" in r["market"]["moscow_what"] and r["market"]["moscow_period"] == "II квартал 2026, на конец квартала"
+    stale = {k: v for k, v in r.items() if k != "market"}
+    market.enrich([stale], obs, date(2027, 3, 1), age)                # квартал устарел — фона нет
+    assert "market" not in stale
+    f = {"facts": {"market": r["market"]}}
+    assert any("по Москве без источника" in p for p in copy.check("В Москве — 391 067 ₽ за метр.", f, with_card=False))
+    assert copy.check("По данным Росстата, в Москве — 391 067 ₽ за метр.", f, with_card=False) == []

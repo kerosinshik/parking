@@ -3,7 +3,7 @@
 - разметка — только теги, которые понимает Telegram (parse_mode=HTML), и все закрыты;
 - длина: с карточкой текст идёт подписью к фото, лимит Telegram — 1024 знака;
 - стиль: без хэштегов и эмодзи (решение автора 12.10.2026);
-- рынок: рыночная цена за м² в тексте — только вместе с источником (facts.market.market_source);
+- рынок: рыночная цена за м² и цена по Москве в тексте — только вместе с источником (market_source, moscow_source);
 - цифры: каждое число в тексте должно быть в фактах поста. Выдуманная или пересчитанная цифра —
   главный риск текста от модели, поэтому такой текст не отправляется, вместо него уходит шаблонный.
 """
@@ -109,6 +109,9 @@ def check(text: str, facts: dict, with_card: bool = True, used_endings: list[str
     if mk.get("market_price_per_m2") and numbers(mk["market_price_per_m2"]) & numbers(shown) \
             and mk.get("market_source", "").lower() not in shown.lower():
         problems.append(f"рыночная цена без источника ({mk.get('market_source')})")
+    if mk.get("moscow_price_per_m2") and numbers(mk["moscow_price_per_m2"]) & numbers(shown) \
+            and mk.get("moscow_source", "").lower() not in shown.lower():
+        problems.append(f"цена по Москве без источника ({mk.get('moscow_source')})")
     for url in re.findall(r'href="([^"]*)"', text):
         if url not in set(_strings(facts)):
             problems.append(f"ссылка не из фактов: {url}")
