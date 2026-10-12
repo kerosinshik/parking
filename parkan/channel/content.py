@@ -44,7 +44,7 @@ POLICY = {
     "torgi_min_gap": 0.20,      # «Старт ниже итогов»: старт за м² ниже ориентира минимум на 20 %
     "torgi_levels": ("дом", "район"),   # ориентир по округу слишком грубый для отдельного поста
     "torgi_min_days_left": 2,   # до конца приёма заявок — хотя бы 2 дня, чтобы читатель успел
-    "torgi_per_day": 1,
+    "torgi_per_day": 2,         # сравнение с домом и (или) с районом — единичные «золотые» случаи не теряются
 }
 RUBRICS = ("lot", "drop", "house", "sold", "nofight", "week", "weekstats", "torgi")
 
@@ -113,8 +113,7 @@ def torgi_posts(con, today: date, sold: list[dict], policy=POLICY) -> list[Post]
         if gap >= policy["torgi_min_gap"] and (r["address"] not in best or gap > best[r["address"]][0]):
             best[r["address"]] = (gap, r, ref)
     out = []
-    # сначала сравнение с итогами в том же доме (сопоставимые квартиры), потом с районом; внутри — по разнице
-    for gap, r, ref in sorted(best.values(), key=lambda x: (x[2]["level"] != "дом", -x[0])):
+    for gap, r, ref in sorted(best.values(), key=lambda x: -x[0]):
         market.enrich([r], [], today, policy["market_max_age_days"], sold=sold)
         out.append(Post(f"torgi:{r['address']}", "torgi", templates.torgi(r, ref), templates.torgi_card(r, ref),
                         score=gap, facts=facts.torgi(r)))
