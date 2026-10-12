@@ -23,7 +23,7 @@ def _clean(d: dict) -> dict:
 def _base(rubric: str, kind: str, **fields) -> dict:
     w = t.WORDS[kind]
     return {"rubric": rubric, "rubric_title": TITLES[rubric], "object": w["forms"][0],
-            "hashtags": [TAGS[rubric], w["tag"]], "facts": _clean(fields)}
+            "facts": _clean(fields)}
 
 
 def _per_m2(price, space) -> str | None:
@@ -96,7 +96,10 @@ def weekstats(kind: str, st: dict) -> dict:
     return _base("weekstats", kind, period=st["period"], auctions=str(st["total"]), sold=str(st["sold"]),
                  sold_at_start_price=str(st["at_start"]),
                  sold_at_start_share=f"{t.pct(st['at_start'] / st['sold'])} %" if st["sold"] else None,
-                 failed=str(st["failed"]), cancelled=str(st["cancelled"]),
+                 not_held=str(st["failed"]), cancelled_by_city=str(st["cancelled"]),
+                 statuses_explained="not_held — торги признаны несостоявшимися: до аукциона не дошло, обычно потому, "
+                                    "что не было заявок; лот не продан и может вернуться на торги. cancelled_by_city — "
+                                    "город сам отменил торги до их проведения (лот сняли).",
                  record=_clean({"growth": f"×{t.num(rec['final_to_start'])}", "address": rec["place"],
                                 "district": t.district(rec.get("district")), "start_price": t.money(rec["start_price"]),
                                 "final_price": t.money(rec["final_price"]), "lot_url": rec.get("url")}) if rec else None)

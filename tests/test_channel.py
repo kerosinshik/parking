@@ -247,6 +247,8 @@ def test_copy_check_numbers_links_markup_length():
     assert any("не закрыты" in p for p in copy.check("<b>текст", facts))
     assert any("лимит 1024" in p for p in copy.check("а" * 1100, facts))
     assert copy.check("а" * 1100, facts, with_card=False) == []
+    assert any("хэштеги" in p for p in copy.check("Текст\n#лотдня", facts))
+    assert any("эмодзи" in p for p in copy.check("📍 Адрес", facts))
 
 
 def test_channel_send_uses_written_text_and_falls_back(con, tmp_path, monkeypatch):
@@ -263,8 +265,7 @@ def test_channel_send_uses_written_text_and_falls_back(con, tmp_path, monkeypatc
     first, second = manifest[0], manifest[1]
     facts = json.loads((day / first["facts"]).read_text(encoding="utf-8"))
     assert facts["rubric"] == "lot" and facts["facts"]["discount"] == "40 %"
-    (day / first["copy"]).write_text(f"<b>Написанный текст</b>\nСкидка {facts['facts']['discount']}.\n"
-                                     + " ".join(facts["hashtags"]), encoding="utf-8")
+    (day / first["copy"]).write_text(f"<b>Написанный текст</b>\nСкидка {facts['facts']['discount']}.", encoding="utf-8")
     (day / second["copy"]).write_text("<b>Выдумка</b> на 77 %", encoding="utf-8")
     assert main(["channel-lint", *base]) == 1                        # второй текст с чужим числом
     assert main(["channel-send", *base]) == 0

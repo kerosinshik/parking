@@ -111,8 +111,9 @@ def _subway(s: str | None) -> str | None:
     return f"🚇 {escape(s)}" if s else None
 
 
-def _post(lines, tags) -> str:
-    return "\n".join(l for l in [*lines, "", EDITOR, "", " ".join(tags)] if l is not None)
+def _post(lines, tags=None) -> str:
+    """Запасной шаблонный текст (если написанный не прошёл проверку). Хэштеги не ставим — решение 12.10.2026."""
+    return "\n".join(l for l in [*lines, "", EDITOR] if l is not None)
 
 
 def _card(template: str, kicker: str, **fields) -> dict:
@@ -303,7 +304,7 @@ def weekstats(kind: str, st: dict) -> str:
              f"🤫 По стартовой цене, без торга: {st['at_start']} ({pct(st['at_start'] / st['sold'])} %)" if st["sold"] else None,
              f"📈 Рекорд: ×{num(rec['final_to_start'])} — {escape(rec['place'])} ({escape(district(rec.get('district')))}), "
              f"{money(rec['start_price'])} → {money(rec['final_price'])}" if rec else None,
-             f"🚫 Не состоялись: {st['failed']} · отменены: {st['cancelled']}"]
+             f"🚫 Не состоялись (покупателя не нашлось): {st['failed']} · отменены городом: {st['cancelled']}"]
     return _post(lines, ["#итогинедели", w["tag"]])
 
 
@@ -324,4 +325,4 @@ def weekstats_card(kind: str, st: dict) -> dict:
     return _card("stats", "ИТОГИ НЕДЕЛИ", headline=str(st["sold"]),
                  headline_sub=f"{plural(st['sold'], w['forms'])} {_sold_verb(kind, st['sold'])} на торгах",
                  deadline=st["period"], districts=st["districts"], stats=stats,
-                 foot=f"не состоялись — {st['failed']} · отменены — {st['cancelled']}")
+                 foot=f"без покупателя — {st['failed']} · отменены городом — {st['cancelled']}")

@@ -2,6 +2,7 @@
 
 - разметка — только теги, которые понимает Telegram (parse_mode=HTML), и все закрыты;
 - длина: с карточкой текст идёт подписью к фото, лимит Telegram — 1024 знака;
+- стиль: без хэштегов и эмодзи (решение автора 12.10.2026);
 - цифры: каждое число в тексте должно быть в фактах поста. Выдуманная или пересчитанная цифра —
   главный риск текста от модели, поэтому такой текст не отправляется, вместо него уходит шаблонный.
 """
@@ -18,6 +19,7 @@ CAPTION_LIMIT = 1024
 TEXT_LIMIT = 4096
 SMALL = 12          # небольшие целые («в 2 раза», «3 места», «1 участник») не требуют опоры в фактах
 
+EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F]")
 NUM = re.compile(r"\d+(?:[  ]\d{3})*(?:[.,]\d+)?")
 
 
@@ -93,6 +95,10 @@ def check(text: str, facts: dict, with_card: bool = True) -> list[str]:
         if n in numbers(hrefs):
             continue
         problems.append(f"число {n} не из фактов")
+    if re.search(r"(^|\s)#\w", shown):
+        problems.append("хэштеги не ставим")
+    if EMOJI.search(shown):
+        problems.append("эмодзи не ставим")
     for url in re.findall(r'href="([^"]*)"', text):
         if url not in set(_strings(facts)):
             problems.append(f"ссылка не из фактов: {url}")
