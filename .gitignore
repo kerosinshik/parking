@@ -7,3 +7,4 @@ demo_out/
 *.duckdb
 *.duckdb.wal
 .env
+channel_out/

@@ -15,6 +15,7 @@ from .mart import MartParams, area_summary, build_mart, export_parquet
 from .raw import store_bytes, store_file
 from .report import render
 from .sources import SOURCE_TYPES, context, mosdata, occupancy, violations
+from .channel.commands import register as register_channel
 from .track.commands import register as register_track
 
 
@@ -237,6 +238,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_export)
 
     register_track(sub)
+    register_channel(sub)
 
     sp = sub.add_parser("demo", help="сгенерировать синтетические данные и прогнать весь конвейер")
     sp.add_argument("--workdir", default="demo_out")
