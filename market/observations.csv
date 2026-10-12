@@ -1,0 +1,17 @@
+observed,level,area,segment,rooms,quality,metric,value,source,url,n,note,added
+2026-03-31,город,Москва,новостройки,все,все,sale_m2,472898,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_perv_2kv-2026.xlsx,,"I квартал 2026, на конец квартала",2026-10-12
+2026-03-31,город,Москва,новостройки,все,типовые,sale_m2,338674,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_perv_2kv-2026.xlsx,,"I квартал 2026, на конец квартала",2026-10-12
+2026-03-31,город,Москва,новостройки,все,улучшенные,sale_m2,449929,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_perv_2kv-2026.xlsx,,"I квартал 2026, на конец квартала",2026-10-12
+2026-03-31,город,Москва,новостройки,все,элитные,sale_m2,755785,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_perv_2kv-2026.xlsx,,"I квартал 2026, на конец квартала",2026-10-12
+2026-06-30,город,Москва,новостройки,все,все,sale_m2,481191,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_perv_2kv-2026.xlsx,,"II квартал 2026, на конец квартала",2026-10-12
+2026-06-30,город,Москва,новостройки,все,типовые,sale_m2,341007,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_perv_2kv-2026.xlsx,,"II квартал 2026, на конец квартала",2026-10-12
+2026-06-30,город,Москва,новостройки,все,улучшенные,sale_m2,457536,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_perv_2kv-2026.xlsx,,"II квартал 2026, на конец квартала",2026-10-12
+2026-06-30,город,Москва,новостройки,все,элитные,sale_m2,775344,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_perv_2kv-2026.xlsx,,"II квартал 2026, на конец квартала",2026-10-12
+2026-03-31,город,Москва,вторичка,все,все,sale_m2,381297,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_vtor_2kv-2026.xlsx,,"I квартал 2026, на конец квартала",2026-10-12
+2026-03-31,город,Москва,вторичка,все,типовые,sale_m2,311212,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_vtor_2kv-2026.xlsx,,"I квартал 2026, на конец квартала",2026-10-12
+2026-03-31,город,Москва,вторичка,все,улучшенные,sale_m2,369553,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_vtor_2kv-2026.xlsx,,"I квартал 2026, на конец квартала",2026-10-12
+2026-03-31,город,Москва,вторичка,все,элитные,sale_m2,562892,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_vtor_2kv-2026.xlsx,,"I квартал 2026, на конец квартала",2026-10-12
+2026-06-30,город,Москва,вторичка,все,все,sale_m2,391067,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_vtor_2kv-2026.xlsx,,"II квартал 2026, на конец квартала",2026-10-12
+2026-06-30,город,Москва,вторичка,все,типовые,sale_m2,333155,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_vtor_2kv-2026.xlsx,,"II квартал 2026, на конец квартала",2026-10-12
+2026-06-30,город,Москва,вторичка,все,улучшенные,sale_m2,372123,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_vtor_2kv-2026.xlsx,,"II квартал 2026, на конец квартала",2026-10-12
+2026-06-30,город,Москва,вторичка,все,элитные,sale_m2,587926,Росстат,https://rosstat.gov.ru/storage/mediabank/sred_cen_vtor_2kv-2026.xlsx,,"II квартал 2026, на конец квартала",2026-10-12
