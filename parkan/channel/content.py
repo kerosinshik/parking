@@ -59,7 +59,7 @@ class Post:
     score: float = 0.0
     card_path: object = None    # готовая карточка (заполняет channel-draft)
     facts: dict | None = None   # факты для автора текста (facts.py, навык channel-copy)
-    market_lot: dict | None = None   # квартира в продаже: под черновиком кнопки «проверить рынок» (market_check)
+    market_lot: dict | None = None   # лот в продаже со стартом ниже медианы: кнопки «проверить рынок» (market_check)
 
 
 def _mix(items: list, n: int) -> list:
@@ -117,7 +117,7 @@ def torgi_posts(con, today: date, sold: list[dict], policy=POLICY) -> list[Post]
     for gap, r, ref in sorted(best.values(), key=lambda x: -x[0]):
         market.enrich([r], [], today, policy["market_max_age_days"], sold=sold)
         out.append(Post(f"torgi:{r['address']}", "torgi", templates.torgi(r, ref), templates.torgi_card(r, ref),
-                        score=gap, facts=facts.torgi(r), market_lot=market_check.lot_for_market(r)))
+                        score=gap, facts=facts.torgi(r), market_lot=market_check.lot_for_market(r, below=True)))
     return out
 
 

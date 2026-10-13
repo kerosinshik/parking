@@ -92,3 +92,34 @@ def test_send_remembers_and_channel_market_builds_draft(tmp_path, monkeypatch):
     t = _send(tmp_path, monkeypatch, [(200, b'{"ok": true, "result": []}')])
     assert main(args) == 0                                                   # повторный запуск ничего не дублирует
     assert b"offset" in t.calls[0][1] and len(json.loads((mday / "drafts.json").read_text())) == 1
+
+
+PARKING = {"kind": "parking", "place": "Бескудниковский бульвар, дом 19, строение 1", "district": "Бескудниковский район",
+           "price": 1_150_000, "space": 13.2, "url": "https://torgi.mos.ru/tender/2", "end_d": "2026-11-30",
+           "coords": "55.86,37.55", "discount": 0.5}
+
+
+def test_buttons_only_below_median_and_parking_filters():
+    assert mc.lot_for_market(dict(PARKING, discount=-0.1)) is None             # дороже медианы — без кнопок
+    assert mc.lot_for_market(dict(PARKING, discount=None)) is None
+    assert mc.lot_for_market(dict(PARKING, discount=None), below=True)["kind"] == "parking"   # «Старт ниже итогов»
+    lot = mc.lot_for_market(PARKING)
+    cian, avito = mc.search_links(lot)
+    assert "office_type%5B0%5D=6&garage_type%5B0%5D=1" in cian[1] and "minarea" not in cian[1]
+    assert "/moskva/garazhi_i_mashinomesta/prodam?q=" in avito[1]
+    assert "/moskva/kvartiry/prodam?q=" in mc.search_links(LOT)[1][1]
+
+
+def test_parking_listings_compare_by_lot_price():
+    items, errors = mc.parse_listings("https://www.cian.ru/sale/commercial/1/ 2,3 млн\n"
+                                      "https://www.avito.ru/moskva/garazhi/2 1 900 000 14 м2\n"
+                                      "https://cian.ru/sale/commercial/3/ 25 тыс", "parking")
+    assert [x["price"] for x in items] == [2_300_000, 1_900_000] and "неправдоподобна" in errors[0]
+    c = mc.compare(PARKING, items)
+    f = mc.facts(PARKING, items, c, date(2026, 10, 13))
+    assert f["object"] == "машино-место" and f["facts"]["compared_by"] == "цена лота"
+    assert f["facts"]["listings_range"] == "1,90–2,30 млн ₽" and f["facts"]["listings_median"] == "2,10 млн ₽"
+    assert f["facts"]["below_listings_median"] == "45 %" and f["facts"]["difference_to_median"] == "950 тыс. ₽"
+    card = mc.card(PARKING, c)
+    assert card["type"] == "parking" and card["headline_sub"] == "старт к объявлениям рядом"
+    assert card["price_sub"] == "13,2 м² · в объявлениях 1,90–2,30 млн ₽ (2)"
