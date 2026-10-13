@@ -44,6 +44,15 @@ parkan channel-export --state-dir <журнал Пульса> \
 
 ## Установка на VPS
 
+Быстрый путь — одна команда от root на сервере (Debian/Ubuntu). Она ставит пакеты, создаёт пользователя `parkan`,
+код и снимок, спрашивает токен и ваш id, запускает службу и cron. Повторный запуск обновляет код:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kerosinshik/parking/main/deploy/install.sh | sudo bash
+```
+
+Ниже то же самое по шагам, если хочется понимать, что происходит.
+
 Нужны Python 3.10+, git и исходящий доступ к `api.telegram.org` и GitHub. Входящие порты не нужны:
 бот опрашивает Telegram сам (long polling).
 
