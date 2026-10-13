@@ -14,12 +14,13 @@ LOT = {"address": "Москва, Чоботовская улица, дом 2, к
 def test_parse_listings_formats_and_errors():
     items, errors = mc.parse_listings(
         "Нашёл вот что:\n"
-        "https://www.cian.ru/sale/flat/1/ 24,5 млн 70\n"
+        "https://www.cian.ru/sale/flat/1/?mlSearchSessionGuid=abc&context=4.x 24,5 млн 70\n"
         "https://www.avito.ru/moskva/kvartiry/2 23 900 000 ₽ 68,5 м2\n"
         "https://cian.ru/sale/flat/3/ 72 м² 25.2м\n"
         "https://cian.ru/sale/flat/4/\n"
         "https://cian.ru/sale/flat/5/ 2,5 млн 70\n")
     assert [(x["site"], round(x["m2"])) for x in items] == [("ЦИАН", 350000), ("Авито", 348905), ("ЦИАН", 350000)]
+    assert items[0]["url"] == "https://www.cian.ru/sale/flat/1/"
     assert len(errors) == 2 and "строка 5: нужна цена и площадь" in errors[0] and "строка 6: выходит" in errors[1]
 
 

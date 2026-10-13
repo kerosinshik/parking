@@ -127,6 +127,8 @@ def parse_line(line: str) -> dict | None:
             price = v
     host = (urlparse(url).hostname or "").removeprefix("www.").removeprefix("m.")
     site = next((name for dom, name in SITES.items() if host == dom or host.endswith("." + dom)), host)
+    if site in SITES.values():   # у площадок адрес объявления — путь; хвосты поиска и слежения не нужны
+        url = url.split("?")[0].split("#")[0]
     out = {"url": url, "site": site, "price": price, "area": area}
     if price and area:
         out["m2"] = price / area
