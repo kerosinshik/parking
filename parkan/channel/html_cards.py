@@ -4,7 +4,8 @@
 лежат в parkan/channel/assets, сеть при отрисовке не нужна. Карта Москвы считается здесь же,
 в Python, и вставляется в страницу готовым SVG — JavaScript странице не нужен.
 
-Браузер: PARKAN_CHROME, иначе Chromium Playwright (/opt/pw-browsers) или chromium/google-chrome из PATH.
+Браузер: PARKAN_CHROME, иначе Chromium Playwright (/opt/pw-browsers, ~/.cache/ms-playwright)
+или chromium/google-chrome из PATH.
 """
 
 from __future__ import annotations
@@ -39,8 +40,12 @@ def chrome_path() -> str | None:
     env = os.environ.get("PARKAN_CHROME")
     if env and Path(env).exists():
         return env
-    for p in sorted(glob.glob("/opt/pw-browsers/chromium-*/chrome-linux/chrome"), reverse=True):
-        return p
+    # Chromium Playwright: общий (/opt/pw-browsers, PLAYWRIGHT_BROWSERS_PATH) или в кэше пользователя
+    roots = [os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or "", "/opt/pw-browsers",
+             str(Path.home() / ".cache/ms-playwright")]
+    for root in filter(None, roots):
+        for p in sorted(glob.glob(f"{root}/chromium-*/chrome-linux*/chrome"), reverse=True):
+            return p
     for name in ("chromium", "chromium-browser", "google-chrome", "chrome"):
         if shutil.which(name):
             return shutil.which(name)

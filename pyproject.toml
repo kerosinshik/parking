@@ -13,6 +13,7 @@ dependencies = ["duckdb>=1.0"]
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 channel = ["pillow>=10"]   # карточки постов для Telegram-канала
+bot = ["pillow>=10", "playwright>=1.40"]   # картинки бота-дорвея: Pillow и Chromium Playwright
 
 [project.scripts]
 parkan = "parkan.cli:main"

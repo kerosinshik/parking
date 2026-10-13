@@ -1,4 +1,4 @@
-"""Команды CLI канала: channel-draft, channel-send, channel-lint, channel-check."""
+"""Команды CLI канала: channel-draft, channel-send, channel-lint, channel-check, channel-export, channel-bot."""
 
 from __future__ import annotations
 
@@ -182,6 +182,28 @@ def cmd_channel_check(a, con) -> int:
     return 0
 
 
+def cmd_channel_export(a, con) -> int:
+    """Снимок для бота-дорвея: лоты в продаже дешевле медианы и итоги торгов для игры."""
+    from . import bot
+    today = date.fromisoformat(a.today) if a.today else now_msk().date()
+    out = a.out or Path(a.channel_state) / "bot" / "lots.json"
+    data = bot.export(con, a.state_dir, today, out, results_path=a.results)
+    print(f"Снимок для бота: лотов {len(data['lots'])}, итогов для игры {len(data['sold'])} → {out}")
+    return 0
+
+
+def cmd_channel_bot(a, con) -> int:
+    """Бот-дорвей: long polling, работает постоянно (systemd на VPS, deploy/)."""
+    from . import bot
+    gate, tg = bot.from_env()
+    if a.setup_only:
+        gate.setup()
+        print("Описание и команды бота обновлены")
+        return 0
+    bot.run(gate, tg)
+    return 0
+
+
 def register(sub) -> None:
     sp = sub.add_parser("channel-draft", help="черновики постов для Telegram-канала (docs/channel.md)")
     sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (track-sync)")
@@ -210,3 +232,15 @@ def register(sub) -> None:
     sp.add_argument("--chat", help="чат для черновиков (иначе TELEGRAM_DRAFT_CHAT)")
     sp.add_argument("--ping", action="store_true", help="отправить в кухню тестовое сообщение")
     sp.set_defaults(fn=cmd_channel_check, track=True)
+
+    sp = sub.add_parser("channel-export", help="снимок лотов и итогов для бота-дорвея (docs/channel-bot.md)")
+    sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (track-sync)")
+    sp.add_argument("--results", help="таблицы итогов торгов для игры «Угадай цену», через запятую")
+    sp.add_argument("--channel-state", default=os.environ.get("PARKAN_CHANNEL_STATE", "channel_state"))
+    sp.add_argument("--out", help="файл снимка (по умолчанию <channel-state>/bot/lots.json)")
+    sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней")
+    sp.set_defaults(fn=cmd_channel_export, track=True)
+
+    sp = sub.add_parser("channel-bot", help="запустить бота-дорвея (переменные — docs/channel-bot.md)")
+    sp.add_argument("--setup-only", action="store_true", help="только обновить описание и меню команд")
+    sp.set_defaults(fn=cmd_channel_bot, track=True)
