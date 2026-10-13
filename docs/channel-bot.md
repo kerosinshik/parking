@@ -26,6 +26,62 @@
 
 Команды: `/start`, `/parking`, `/flats`, `/game`, `/alerts`, `/channel`; `/stats` — только администраторам.
 
+## Боевая установка (13.10.2026)
+
+Бот развёрнут автором на своём VPS вручную, не через `install.sh`, поэтому пути отличаются от примеров ниже.
+IP сервера, SSH-логины и id администратора здесь не пишем: репозиторий публичный. Они хранятся у автора.
+
+| | |
+|---|---|
+| Пользователь сервиса | `user-bot` (sudo-операции — под отдельным пользователем автора) |
+| Код | `/home/user-bot/torgi_moskva`, ветка `claude/exciting-wright-7y44ub` (в `main` пока не влита) |
+| Снимок лотов | `/home/user-bot/torgi_moskva-data/channel_state/bot/lots.json` (клон ветки `data`) |
+| База бота (SQLite) | `/home/user-bot/torgi_moskva/bot.sqlite` |
+| Служба | `poputny-bot` (systemd) |
+
+Служба:
+
+```bash
+sudo systemctl status poputny-bot
+journalctl -u poputny-bot -f
+sudo systemctl restart poputny-bot
+```
+
+Обновить код:
+
+```bash
+cd /home/user-bot/torgi_moskva
+git pull origin claude/exciting-wright-7y44ub
+.venv/bin/pip install -q -e .
+sudo systemctl restart poputny-bot
+```
+
+Обновить снимок. `channel-export` запускается там, где есть журнал Пульса и итоги торгов (облачный запуск канала),
+затем результат пушится в ветку `data`:
+
+```bash
+parkan channel-export --state-dir <журнал> \
+    --results results/torgi-mashinomesta.csv,results/torgi-kvartiry.csv \
+    --out channel_state/bot/lots.json
+```
+
+На сервере после этого достаточно `git -C /home/user-bot/torgi_moskva-data pull -q --ff-only`. Перезапуск не нужен:
+бот сам замечает новый файл, перечитывает его и рассылает уведомления. Автоматически это делает cron раз
+в 30 минут: `deploy/update-snapshot.sh`, путь `cd` в нём поправить на `/home/user-bot/torgi_moskva-data`.
+
+`.env` на сервере:
+
+```
+PARKAN_BOT_TOKEN=<токен от @BotFather>
+PARKAN_CHANNEL_URL=https://t.me/poputny_metr
+PARKAN_BOT_ADMINS=<id автора в Telegram>
+PARKAN_BOT_LOTS=/home/user-bot/torgi_moskva-data/channel_state/bot/lots.json
+PARKAN_BOT_DB=/home/user-bot/torgi_moskva/bot.sqlite
+```
+
+Если служба собрана из `deploy/poputny-bot.service`, в ней должны стоять пути `/home/user-bot/...`
+и не должно быть `ProtectHome=true`: эта настройка закрывает `/home`, и бот не прочитает ни код, ни снимок.
+
 ## Данные
 
 Бот не ходит в портал и не считает медианы. Он читает снимок, который каждый день готовит запуск канала:
