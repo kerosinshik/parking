@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from ..track import digest
-from . import facts, lots, market, templates
+from . import facts, lots, market, market_check, templates
 
 # Редакционная политика канала. Отдельно от порогов сводки Trello: их можно менять независимо.
 POLICY = {
@@ -59,6 +59,7 @@ class Post:
     score: float = 0.0
     card_path: object = None    # готовая карточка (заполняет channel-draft)
     facts: dict | None = None   # факты для автора текста (facts.py, навык channel-copy)
+    market_lot: dict | None = None   # квартира в продаже: под черновиком кнопки «проверить рынок» (market_check)
 
 
 def _mix(items: list, n: int) -> list:
@@ -78,14 +79,14 @@ def lot_posts(con, state_dir, today, policy=POLICY, obs=(), sold=None) -> list[P
     rows = lots.new_deals(con, state_dir, today, policy["lot_min_discount"])
     market.enrich(rows, obs, today, policy["market_max_age_days"], sold=sold)
     return [Post(f"lot:{r['kind']}:{r['address']}:{r['end_d']}", "lot", templates.lot(r), templates.lot_card(r),
-                 score=r["discount"], facts=facts.lot(r)) for r in rows]
+                 score=r["discount"], facts=facts.lot(r), market_lot=market_check.lot_for_market(r)) for r in rows]
 
 
 def drop_posts(con, state_dir, today, policy=POLICY, obs=(), sold=None) -> list[Post]:
     rows = lots.price_drops(con, state_dir, today, policy["drop_min"])
     market.enrich(rows, obs, today, policy["market_max_age_days"], sold=sold)
     return [Post(f"drop:{r['record_id']}:{r['price']:.0f}", "drop", templates.drop(r), templates.drop_card(r),
-                 score=r["drop"], facts=facts.drop(r)) for r in rows]
+                 score=r["drop"], facts=facts.drop(r), market_lot=market_check.lot_for_market(r)) for r in rows]
 
 
 def house_posts(con, state_dir, today, policy=POLICY) -> list[Post]:
@@ -116,7 +117,7 @@ def torgi_posts(con, today: date, sold: list[dict], policy=POLICY) -> list[Post]
     for gap, r, ref in sorted(best.values(), key=lambda x: -x[0]):
         market.enrich([r], [], today, policy["market_max_age_days"], sold=sold)
         out.append(Post(f"torgi:{r['address']}", "torgi", templates.torgi(r, ref), templates.torgi_card(r, ref),
-                        score=gap, facts=facts.torgi(r)))
+                        score=gap, facts=facts.torgi(r), market_lot=market_check.lot_for_market(r)))
     return out
 
 

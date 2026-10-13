@@ -40,7 +40,7 @@ def load(con, state_dir, today: date) -> bool:
                {_j('AdmArea')} AS adm, try_cast({_j('Space')} AS DOUBLE) AS space,
                try_cast({_j('StartPrice')} AS DOUBLE) AS price, {_j('Stage')} AS stage,
                {_d('StartReceptionDate')} AS start_d, {_d('EndReceptionDate')} AS end_d, {_d('TradesDate')} AS trades_d,
-               {_j('WebSite[0].WebSite')} AS site, first_seen
+               {_j('WebSite[0].WebSite')} AS site, {_j('Coordinates')} AS coords, first_seen
         FROM ({sql}) JOIN k ON k.t = {_j('ObjectType')}
         WHERE {_j('OnTerritoryOfMoscow')} = 'да'
     """)
