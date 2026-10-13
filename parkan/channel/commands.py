@@ -1,9 +1,10 @@
-"""Команды CLI канала: channel-draft, channel-send, channel-lint, channel-check, channel-export, channel-bot."""
+"""Команды CLI канала: channel-draft, channel-send, channel-lint, channel-check, channel-export, channel-bot, channel-houses."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -54,18 +55,49 @@ def cmd_channel_draft(a, con) -> int:
 
 
 DEFAULT_CHANNEL_URL = "https://t.me/poputny_metr"
+DEFAULT_BOT_URL = ""   # адрес бота-дорвея, когда он задан; пока — только через PARKAN_BOT_URL
 
 
-def with_signature(text: str) -> str:
-    """Подпись-ссылка на канал в конце поста (PARKAN_CHANNEL_URL): в канале она не мешает, а при пересылке
-    поста в чат или другой канал ведёт читателя к нам. Ставит код, не автор текста, — одинаково везде.
-    PARKAN_CHANNEL_URL="" отключает подпись."""
-    url = os.environ.get("PARKAN_CHANNEL_URL", DEFAULT_CHANNEL_URL).strip()
-    if not url or url in text:
-        return text
+def bot_link(facts: dict | None) -> str | None:
+    """Ссылка «в бота» для поста (PARKAN_BOT_URL, например https://t.me/torgi_moskva_bot).
+
+    Пост про лот в продаже — сразу на карточку лота (`?start=lot_<id>`), «Целый дом» — на самый дешёвый лот
+    дома (`dom_<id>`), остальное — в меню бота с меткой рубрики (`ch_<рубрика>`), чтобы /stats показал,
+    откуда пришли. Пустой PARKAN_BOT_URL — ссылки нет."""
+    url = os.environ.get("PARKAN_BOT_URL", DEFAULT_BOT_URL).strip().rstrip("/")
+    if not url:
+        return None
+    facts = facts or {}
+    rubric, f = facts.get("rubric") or "post", facts.get("facts") or {}
+    tender = lambda u: (re.search(r"/tender/(\d+)", u or "") or [None, None])[1]   # noqa: E731
+    if rubric in ("lot", "drop") and tender(f.get("lot_url")):
+        return f"{url}?start=lot_{tender(f['lot_url'])}"
+    if rubric == "house" and tender(f.get("cheapest_lot_url")):
+        return f"{url}?start=dom_{tender(f['cheapest_lot_url'])}"
+    return f"{url}?start=ch_{rubric}"
+
+
+BOT_LABELS = {"lot": "Карточка лота и похожие — в боте", "drop": "Карточка лота и похожие — в боте",
+              "house": "Все лоты рядом — в боте"}
+
+
+def with_signature(text: str, facts: dict | None = None) -> str:
+    """Подпись в конце поста: ссылка на канал (PARKAN_CHANNEL_URL) и на бота (PARKAN_BOT_URL).
+
+    В канале она не мешает, а при пересылке поста в чат или другой канал ведёт читателя к нам: в канал
+    напрямую или через бота, где карточка лота и кнопка «Подписаться». Ставит код, не автор текста, —
+    одинаково везде. Пустые переменные отключают свою ссылку."""
     from html import escape
     from .templates import channel_name
-    return f'{text}\n\n<a href="{escape(url, quote=True)}">{escape(channel_name())}</a>'
+    links = []
+    url = os.environ.get("PARKAN_CHANNEL_URL", DEFAULT_CHANNEL_URL).strip()
+    if url and url not in text:
+        links.append(f'<a href="{escape(url, quote=True)}">{escape(channel_name())}</a>')
+    bot = bot_link(facts)
+    if bot and bot not in text:
+        label = BOT_LABELS.get((facts or {}).get("rubric"), "Лоты по вашему округу — в боте")
+        links.append(f'<a href="{escape(bot, quote=True)}">{label}</a>')
+    return f"{text}\n\n{' · '.join(links)}" if links else text
 
 
 def _used_endings(state_dir) -> list[str]:
@@ -100,7 +132,7 @@ def send_dir(day: Path, registry_path: Path, chat: str | None, today: date) -> i
         if m.get("sent"):
             continue
         text, source = _text_for(day, m, used + new_endings)
-        text = with_signature(text)
+        text = with_signature(text, copy.load_facts(day / m["facts"]) if (day / m["facts"]).exists() else None)
         try:
             bot.send_post(chat, text, day / m["card"] if m.get("card") else None)
         except Exception as e:   # один черновик не должен срывать остальные
@@ -188,7 +220,8 @@ def cmd_channel_export(a, con) -> int:
     today = date.fromisoformat(a.today) if a.today else now_msk().date()
     out = a.out or Path(a.channel_state) / "bot" / "lots.json"
     data = bot.export(con, a.state_dir, today, out, results_path=a.results)
-    print(f"Снимок для бота: лотов {len(data['lots'])}, итогов для игры {len(data['sold'])} → {out}")
+    print(f"Снимок для бота: лотов {len(data['lots'])}, домов с пачками {len(data['houses'])}, "
+          f"итогов для игры {len(data['sold'])} → {out}")
     return 0
 
 
@@ -201,6 +234,22 @@ def cmd_channel_bot(a, con) -> int:
         print("Описание и команды бота обновлены")
         return 0
     bot.run(gate, tg)
+    return 0
+
+
+def cmd_channel_houses(a, con) -> int:
+    """Дома с пачками лотов — готовые сообщения для чатов домов (docs/channel-bot.md, «Привлечение»)."""
+    from . import houses
+    today = date.fromisoformat(a.today) if a.today else now_msk().date()
+    bot_url = a.bot_url if a.bot_url is not None else os.environ.get("PARKAN_BOT_URL", DEFAULT_BOT_URL).strip()
+    found = houses.find(con, a.state_dir, today, {"parking": a.min_lots, "flat": max(3, a.min_lots // 2)}, a.top)
+    text = houses.report(found, bot_url or None, today)
+    if a.out:
+        Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.out).write_text(text + "\n", encoding="utf-8")
+        print(f"Домов: {len(found)} → {a.out}")
+    else:
+        print(text)
     return 0
 
 
@@ -244,3 +293,12 @@ def register(sub) -> None:
     sp = sub.add_parser("channel-bot", help="запустить бота-дорвея (переменные — docs/channel-bot.md)")
     sp.add_argument("--setup-only", action="store_true", help="только обновить описание и меню команд")
     sp.set_defaults(fn=cmd_channel_bot, track=True)
+
+    sp = sub.add_parser("channel-houses", help="дома с пачками лотов: готовые сообщения для чатов домов")
+    sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (track-sync)")
+    sp.add_argument("--min-lots", type=int, default=5, help="машино-мест в доме, не меньше (квартир — вдвое меньше, от 3)")
+    sp.add_argument("--top", type=int, default=15, help="сколько домов")
+    sp.add_argument("--bot-url", help="адрес бота (иначе PARKAN_BOT_URL)")
+    sp.add_argument("--out", help="файл Markdown (иначе вывод в консоль)")
+    sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней")
+    sp.set_defaults(fn=cmd_channel_houses, track=True)

@@ -272,3 +272,55 @@ def test_cards_off_and_prewarm(tmp_path):
     n = len(drawn)
     g.tick()                                      # тот же снимок — заново не рисуем
     assert len(drawn) == n
+
+
+def test_house_link_open_to_all(tmp_path):
+    rec = Recorder()                              # не подписан
+    house = {"id": "77", "kind": "parking", "place": "проезд Черепановых, дом 10", "district": "район Коптево",
+             "adm": "САО", "n": 186, "price_min": 2_060_000, "price_max": 2_780_000, "space_min": 13.3,
+             "space_max": 21.6, "ref": None, "scope": "района", "end_d": "2026-10-15", "trades_d": "2026-10-21",
+             "url": "https://torgi.mos.ru/tender/77"}
+    g, store = make(tmp_path, rec)
+    p = tmp_path / "lots.json"
+    p.write_text(json.dumps({"date": "2026-10-06", "lots": [L(1)], "houses": [house]}, ensure_ascii=False),
+                 encoding="utf-8")
+    g.handle(msg("/start dom_77"))
+    text, kb = rec.last()
+    assert "186 машино-мест в одном доме" in text and "от 2,06 млн ₽ до 2,78 млн ₽" in text and "Медиана" not in text
+    assert kb[0]["url"] == "https://t.me/poputny_metr" and kb[1]["callback_data"] == "a+:parking:САО"
+    assert store.q("SELECT source FROM users WHERE id = 7") == [("dom_77",)]
+    g.handle(msg("/start lot_1"))                 # карточка лота тоже открыта, но с приглашением в канал
+    text, kb = rec.last()
+    assert "дешевле района" in text and "для подписчиков" in text and kb[0]["url"] == "https://t.me/poputny_metr"
+    g.handle(msg("/start dom_999"))               # дома нет — ищем лот, нет и его — меню
+    assert "уже нет" in rec.last()[0]
+
+
+def test_post_signature_links_to_bot(monkeypatch):
+    from parkan.channel.commands import bot_link, with_signature
+    monkeypatch.delenv("PARKAN_CHANNEL_URL", raising=False)
+    monkeypatch.setenv("PARKAN_BOT_URL", "https://t.me/torgi_bot")
+    lot = {"rubric": "lot", "facts": {"lot_url": "https://torgi.mos.ru/tender/123"}}
+    assert bot_link(lot) == "https://t.me/torgi_bot?start=lot_123"
+    assert bot_link({"rubric": "house", "facts": {"cheapest_lot_url": "https://torgi.mos.ru/tender/9"}}) \
+        == "https://t.me/torgi_bot?start=dom_9"
+    assert bot_link({"rubric": "sold", "facts": {"lot_url": "https://torgi.mos.ru/tender/5"}}) \
+        == "https://t.me/torgi_bot?start=ch_sold"
+    text = with_signature("Текст", lot)
+    assert text.endswith('<a href="https://t.me/poputny_metr">Попутный Метр</a> · '
+                         '<a href="https://t.me/torgi_bot?start=lot_123">Карточка лота и похожие — в боте</a>')
+    monkeypatch.setenv("PARKAN_BOT_URL", "")
+    assert with_signature("Текст", lot).endswith(">Попутный Метр</a>")
+
+
+def test_houses_report(con, tmp_path):  # noqa: F811
+    from parkan.channel import houses
+    journal(con, tmp_path)
+    found = houses.find(con, tmp_path, date(2026, 10, 6), {"parking": 5, "flat": 3})
+    by = {h["place"]: h for h in found}
+    assert by["ул. Новая, 3"]["n"] == 5 and by["ул. Новая, 3"]["kind"] == "flat"
+    text = houses.report(found, "https://t.me/torgi_bot", date(2026, 10, 6))
+    assert "город продаёт на торгах 5 квартир" in text and f"?start=dom_{by['ул. Новая, 3']['lot_id']}" in text
+    assert "Подольск" not in text
+    data = bot.export(con, tmp_path, date(2026, 10, 6), tmp_path / "s.json")
+    assert any(h["place"] == "ул. Новая, 3" for h in data["houses"])

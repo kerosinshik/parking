@@ -31,7 +31,7 @@ from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from . import bot_media, lots, templates
+from . import bot_media, houses, lots, templates
 from .telegram import CAPTION_LIMIT, Bot, TelegramError
 
 SHOW = 5                    # лотов в одном ответе
@@ -84,7 +84,12 @@ def export(con, state_dir, today: date, path, results_path=None, min_discount: f
              "date": _iso(lots.trades_date(r)), "url": r.get("url")}
             for r in lots.results(results_path)
             if r.get("final_price") and r.get("start_price") and (d := lots.trades_date(r)) and d >= since]
-    data = {"date": today.isoformat(), "lots": sale, "sold": sold}
+    homes = [{"id": str(h["lot_id"]), "kind": h["kind"], "place": h["place"], "district": h["district"],
+              "adm": ADM.get(h["adm"] or "", h["adm"]), "n": h["n"], "price_min": h["price_min"],
+              "price_max": h["price_max"], "space_min": h["space_min"], "space_max": h["space_max"],
+              "ref": h["ref"] if houses.cheaper(h) else None, "scope": h["scope"], "end_d": _iso(h["end_d"]),
+              "trades_d": _iso(h["trades_d"]), "url": h["url"]} for h in houses.query(con)]
+    data = {"date": today.isoformat(), "lots": sale, "sold": sold, "houses": homes}
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
@@ -101,7 +106,7 @@ class Snapshot:
     """Снимок с диска; перечитывается, когда файл обновился (git pull по cron)."""
 
     def __init__(self, path):
-        self.path, self.mtime, self.date, self.lots, self.sold = Path(path), None, None, [], []
+        self.path, self.mtime, self.date, self.lots, self.sold, self.houses = Path(path), None, None, [], [], []
 
     def refresh(self) -> bool:
         """True, если файл перечитан."""
@@ -113,7 +118,7 @@ class Snapshot:
             return False
         data = json.loads(self.path.read_text(encoding="utf-8"))
         self.mtime, self.date = m, data.get("date")
-        self.lots, self.sold = data.get("lots", []), data.get("sold", [])
+        self.lots, self.sold, self.houses = data.get("lots", []), data.get("sold", []), data.get("houses", [])
         return True
 
     def open_lots(self, kind: str | None, adm: str | None, today: date) -> list[dict]:
@@ -130,6 +135,10 @@ class Snapshot:
 
     def find(self, lot_id: str) -> dict | None:
         return next((l for l in self.lots if l["id"] == lot_id), None)
+
+    def find_house(self, lot_id: str) -> dict | None:
+        """Дом по самому дешёвому лоту (ссылка dom_<id> из чата дома или поста «Целый дом»)."""
+        return next((h for h in self.houses if h["id"] == lot_id), None)
 
     def find_sold(self, sid: str) -> dict | None:
         return next((s for s in self.sold if s["id"] == sid), None)
@@ -396,6 +405,8 @@ class Gate:
         for kind in lots.KINDS:
             for l in self.snap.open_lots(kind, None, today)[:PREWARM_LOTS]:
                 want(*self._lot_card(l))
+        for h in self.snap.houses[:PREWARM_LOTS]:
+            want(f"house:{h['id']}:{h['n']}:{h['price_min']}", lambda h=h: bot_media.house_card(h))
         for s in games[10:]:
             want(*self._game_card(s))
 
@@ -454,7 +465,9 @@ class Gate:
         cmd = cmd.split("@", 1)[0].lower()
         source = (arg.strip()[:64] or None) if cmd == "/start" else None
         self.store.touch(u, self.now(), source)
-        if source and source.startswith("lot_"):
+        if source and source.startswith("dom_") and self.snap.find_house(source[4:]):   # чат дома, «Целый дом»
+            return self.show_house(chat_id, u["id"], self.snap.find_house(source[4:]))
+        if source and source[:4] in ("lot_", "dom_"):   # пост канала
             return self.show_lot(chat_id, u["id"], source[4:])
         if source == "game" or cmd == "/game":
             return self.game(chat_id, u["id"])
@@ -535,16 +548,49 @@ class Gate:
         self.reply(chat_id, text, kb, *self._list_card(kind, adm, limit, today))
 
     def show_lot(self, chat_id, uid: int, lot_id: str) -> None:
+        """Карточка одного лота открыта всем: это первая польза для пришедшего по ссылке. Подборки и
+        уведомления — подписчикам канала, поэтому не подписанному сразу предлагаем канал."""
         l = self.snap.find(lot_id)
         if not l:
-            return self.send(chat_id, "Этого лота уже нет в подборке: заявки закрыты или цена изменилась.",
-                             [[_btn("Машино-места", "parking"), _btn("Квартиры", "flat")]])
-        if not self.is_member(uid):
-            return self.send(chat_id, f"Карточка лота открывается подписчикам канала «{escape(self.name)}». "
-                                      "Подпишитесь и нажмите «Готово».", self._subscribe_kb(f"lot:{lot_id}"))
+            return self.send(chat_id, "Этого лота уже нет в подборке: заявки закрыты или цена изменилась. "
+                                      "Вот что есть сейчас:",
+                             [[_btn("Машино-места", "parking"), _btn("Квартиры", "flat")],
+                              [_btn(f"Канал «{self.name}»", url=self.url)]])
         adm = l.get("adm") or ""
-        self.reply(chat_id, lot_text(l), [[_btn("Похожие: " + _alert_name(l["kind"], adm), f"{l['kind']}:{adm}")],
-                                          [_btn("Уведомлять о таких", f"a+:{l['kind']}:{adm}")]], *self._lot_card(l))
+        kb = [[_btn("Похожие: " + _alert_name(l["kind"], adm), f"{l['kind']}:{adm}")],
+              [_btn("Уведомлять о таких", f"a+:{l['kind']}:{adm}")]]
+        text = lot_text(l)
+        if not self.is_member(uid):
+            text += (f"\n\nПохожие лоты, выбор округа и уведомления — для подписчиков канала «{escape(self.name)}», "
+                     "там каждый день лучшие лоты и итоги торгов.")
+            kb.insert(0, [_btn("Подписаться на канал", url=self.url)])
+        self.reply(chat_id, text, kb, *self._lot_card(l))
+
+    def show_house(self, chat_id, uid: int, h: dict) -> None:
+        """Пачка лотов в одном доме — открыта всем, как и карточка лота."""
+        w = templates.WORDS[h["kind"]]
+        prices = f"от {templates.money(h['price_min'])} до {templates.money(h['price_max'])}" \
+            if h["price_max"] > h["price_min"] else templates.money(h["price_min"])
+        area = templates.area_range(h.get("space_min"), h.get("space_max"))
+        lines = [f"<b>{h['n']} {templates.plural(h['n'], w['forms'])} в одном доме</b>", "", _where(h),
+                 f"Цены: <b>{prices}</b>" + (f" · {area}" if area else "")]
+        if h.get("ref"):
+            lines.append(f"Медиана {h.get('scope') or 'района'}: {templates.money(h['ref'])}")
+        if h.get("end_d"):
+            lines.append(f"Заявки до {templates.day(h['end_d'])}"
+                         + (f", торги {templates.day(h['trades_d'])}" if h.get("trades_d") else ""))
+        if h.get("url"):
+            lines += ["", templates.link(h["url"], "Самый дешёвый лот на torgi.mos.ru")]
+        adm = h.get("adm") or ""
+        kb = [[_btn("Уведомлять о новых" + (f" в {adm}" if adm else ""), f"a+:{h['kind']}:{adm}")],
+              [_btn("Выгодные лоты: " + _alert_name(h["kind"], adm), f"{h['kind']}:{adm}")]]
+        text = "\n".join(lines)
+        if not self.is_member(uid):
+            text += (f"\n\nВыгодные лоты по округам и уведомления — для подписчиков канала «{escape(self.name)}», "
+                     "там каждый день лучшие лоты и итоги торгов.")
+            kb.insert(0, [_btn("Подписаться на канал", url=self.url)])
+        self.reply(chat_id, text, kb, f"house:{h['id']}:{h['n']}:{h['price_min']}",
+                   lambda: bot_media.house_card(h))
 
     # -------- уведомления
 
