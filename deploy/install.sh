@@ -40,7 +40,11 @@ else
 fi
 [ -x "$APP/.venv/bin/python" ] || as python3 -m venv "$APP/.venv"
 as "$APP/.venv/bin/pip" install -q --upgrade pip
-as "$APP/.venv/bin/pip" install -q -e "$APP"
+as "$APP/.venv/bin/pip" install -q -e "$APP[bot]"
+
+say "Chromium для картинок (Playwright; без него бот отвечает текстом)"
+"$APP/.venv/bin/python" -m playwright install-deps chromium >/dev/null || echo "   системные библиотеки не поставились — картинок не будет"
+as "$APP/.venv/bin/python" -m playwright install chromium >/dev/null || echo "   Chromium не скачался — картинок не будет"
 
 say "Снимок лотов из ветки data (только channel_state/bot)"
 if [ ! -d "$DATA/.git" ]; then

@@ -1,7 +1,9 @@
 import json
 from datetime import date, datetime
 
-from parkan.channel import bot
+from pathlib import Path
+
+from parkan.channel import bot, bot_media
 from parkan.channel.telegram import Bot, TelegramError
 
 from .test_channel import con, journal, results_csv  # noqa: F401
@@ -204,3 +206,69 @@ def test_channel_chat_and_env(tmp_path):
     g, tg = bot.from_env({"PARKAN_BOT_TOKEN": "T", "PARKAN_BOT_DB": ":memory:", "PARKAN_BOT_ADMINS": "1, 2",
                           "PARKAN_BOT_LOTS": str(tmp_path / "none.json")})
     assert isinstance(tg, Bot) and g.admins == {1, 2} and g.chat == "@poputny_metr" and g.gate
+
+
+class Photos(Recorder):
+    """Recorder, у которого sendPhoto возвращает file_id."""
+
+    def call(self, method, fields, files=None):
+        r = super().call(method, fields, files)
+        if method == "sendPhoto":
+            if getattr(self, "photo_fails", False):
+                raise TelegramError("sendPhoto: Bad Request")
+            return {"photo": [{"file_id": "small"}, {"file_id": "BIG"}]}
+        return r
+
+
+def fake_cards(tmp_path, drawn):
+    def render(card, path):
+        drawn.append(card)
+        Path(path).write_bytes(b"png")
+    return bot_media.Cards(tmp_path / "cards", render=render, available=lambda: True, sync=True, log=lambda m: None)
+
+
+def test_cards_photo_caption_file_id_and_fallback(tmp_path):
+    drawn = []
+    rec = Photos(members={7})
+    g, _ = make(tmp_path, rec, [L(i) for i in range(6)], sold=SOLD, cards=fake_cards(tmp_path, drawn))
+    g.handle(msg("/start"))
+    method, f = rec.calls[-1]
+    assert method == "sendPhoto" and "Город продаёт" in f["caption"] and f["parse_mode"] == "HTML"
+    assert drawn[-1]["template"] == "cover" and json.loads(f["reply_markup"])["inline_keyboard"]
+    g.handle(msg("/start"))                       # второй раз — по file_id, без загрузки и отрисовки
+    assert rec.calls[-1][1]["photo"] == "BIG" and len(drawn) == 1
+
+    g.handle(press("parking"))                    # подборка: карточка-список
+    assert rec.calls[-1][0] == "sendPhoto" and drawn[-1]["template"] == "list" and drawn[-1]["headline"] == "6"
+    g.handle(msg("/start lot_3"))
+    assert drawn[-1]["kicker"] == "ЛОТ НА ТОРГАХ" and drawn[-1]["headline"] == "−40%"
+    g.handle(msg("/game"))
+    assert drawn[-1]["kicker"] == "УГАДАЙ ЦЕНУ" and drawn[-1]["headline"] == "?"
+    assert "2,90" not in json.dumps(drawn[-1], ensure_ascii=False)   # итог в вопросе не виден
+
+    long = "x" * 1500                             # длиннее подписи: фото, потом текст с кнопками
+    g.reply(7, long, [[{"text": "a", "callback_data": "b"}]], "long", lambda: {"template": "cover"})
+    assert [m for m, _ in rec.calls[-2:]] == ["sendPhoto", "sendMessage"] and "caption" not in rec.calls[-2][1]
+
+    rec.photo_fails = True                        # фото не ушло — ответ текстом
+    g.reply(7, "текст", None, "other", lambda: {"template": "cover"})
+    assert rec.calls[-1][0] == "sendMessage" and rec.calls[-1][1]["text"] == "текст"
+
+
+def test_cards_off_and_prewarm(tmp_path):
+    rec = Recorder()
+    off = bot_media.Cards(tmp_path / "c", available=lambda: False)
+    g, _ = make(tmp_path, rec, [L(1)], cards=off)
+    g.handle(msg("/start"))
+    assert rec.calls[-1][0] == "sendMessage" and not (tmp_path / "c").exists()
+
+    drawn = []
+    g, _ = make(tmp_path, Recorder(), [L(1), L(2, adm="САО"), L(3, kind="flat")], sold=SOLD,
+                cards=fake_cards(tmp_path, drawn))
+    g.tick()
+    kinds = [c["template"] for c in drawn]
+    assert kinds.count("cover") == 1 and kinds.count("list") >= 4 and "lot" in kinds
+    assert any(c["kicker"] == "УГАДАЙ ЦЕНУ" for c in drawn)
+    n = len(drawn)
+    g.tick()                                      # тот же снимок — заново не рисуем
+    assert len(drawn) == n

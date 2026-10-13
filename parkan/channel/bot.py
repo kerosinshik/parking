@@ -31,8 +31,8 @@ from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from . import lots, templates
-from .telegram import Bot, TelegramError
+from . import bot_media, lots, templates
+from .telegram import CAPTION_LIMIT, Bot, TelegramError
 
 SHOW = 5                    # лотов в одном ответе
 FREE = 2                    # сколько лотов показываем без подписки — «попробовать»
@@ -41,6 +41,8 @@ EXPORT_MIN_DISCOUNT = 0.10  # в снимок — лоты дешевле мед
 GAME_DAYS = 90              # в игру — итоги за последние N дней
 NOTIFY_MAX = 5              # лотов в одном уведомлении (остальные — «ещё N»)
 GAME_RATIOS = (1.0, 1.15, 1.4, 1.8, 2.5, 3.5)   # варианты «итог / старт» для подсказок в игре
+PREWARM_LOTS = 20           # карточек лучших лотов каждого типа рисуем заранее
+PREWARM_GAME = 100          # вопросов игры с картинкой держим наготове
 
 # Короткие имена округов: в callback_data не больше 64 байт
 ADM = {
@@ -59,6 +61,7 @@ COMMANDS = [("start", "Главное меню"), ("parking", "Машино-ме
             ("flats", "Квартиры дешевле района"), ("game", "Угадай цену: итоги торгов"),
             ("alerts", "Мои уведомления"), ("channel", "Канал «{name}»")]
 MEMBER_STATUSES = {"creator", "administrator", "member"}
+COVER = "cover:v1"
 
 
 # ---------------------------------------------------------------- снимок
@@ -299,6 +302,12 @@ def game_options(s: dict) -> tuple[list[float], int]:
     return [s["start"] * r for r in opts], opts.index(real)
 
 
+def _visible(html: str) -> str:
+    """Текст без разметки — так Telegram считает длину подписи."""
+    from html import unescape
+    return unescape(re.sub(r"<[^>]+>", "", html))
+
+
 def _alert_name(kind: str, adm: str) -> str:
     return templates.WORDS[kind]["forms"][1] + (f", {adm}" if adm else ", вся Москва")
 
@@ -309,8 +318,9 @@ class Gate:
     """Обработка обновлений Telegram; всё уходит через bot.call."""
 
     def __init__(self, bot, snapshot: Snapshot, store: Store, channel_url: str, chat: str | None = None,
-                 admins=(), gate: bool = True, clock=time.time, now=datetime.now, log=None, rnd=None):
-        self.bot, self.snap, self.store = bot, snapshot, store
+                 admins=(), gate: bool = True, clock=time.time, now=datetime.now, log=None, rnd=None,
+                 cards: bot_media.Cards | None = None):
+        self.bot, self.snap, self.store, self.cards = bot, snapshot, store, cards
         self.url, self.chat = channel_url, chat or channel_chat(channel_url)
         self.admins, self.gate = {int(a) for a in admins}, gate and bool(self.chat)
         self.clock, self.now, self.rnd = clock, now, rnd or random.Random()
@@ -336,6 +346,72 @@ class Gate:
         self.bot.call("sendMessage", {"chat_id": chat_id, "text": text, "parse_mode": "HTML",
                                       "reply_markup": _kb(kb) if kb else None,
                                       "link_preview_options": json.dumps({"is_disabled": True})})
+
+    def reply(self, chat_id, text: str, kb=None, key: str | None = None, make=None) -> None:
+        """Ответ с карточкой, если она уже нарисована; иначе текстом, а карточка — в очередь на отрисовку."""
+        p = self.cards.get(key, make) if self.cards and key else None
+        if p is None:
+            return self.send(chat_id, text, kb)
+        short = len(_visible(text)) <= CAPTION_LIMIT
+        fields = {"chat_id": chat_id}
+        if short:
+            fields.update(caption=text, parse_mode="HTML", reply_markup=_kb(kb) if kb else None)
+        fid = self.cards.file_ids.get(key)
+        try:
+            res = self.bot.call("sendPhoto", dict(fields, photo=fid)) if fid else \
+                self.bot.call("sendPhoto", fields, {"photo": p})
+        except TelegramError as e:   # картинка не ушла — ответ всё равно нужен
+            self.log(f"sendPhoto {key}: {e}")
+            self.cards.file_ids.pop(key, None)
+            return self.send(chat_id, text, kb)
+        photos = (res or {}).get("photo") or []
+        if photos:
+            self.cards.file_ids[key] = photos[-1]["file_id"]
+        if not short:
+            self.send(chat_id, text, kb)
+
+    def prewarm(self) -> None:
+        """После обновления снимка: заранее нарисовать то, что спрашивают чаще всего."""
+        if not (self.cards and self.cards.on):
+            return
+        self.cards.cleanup()
+        self.cards.file_ids.clear()
+        today = self._today()
+        want = self.cards.want
+        pool = [s for s in self.snap.sold if s.get("start") and s.get("final")]
+        games = random.Random(self.snap.date).sample(pool, min(PREWARM_GAME, len(pool)))
+        # по убыванию спроса: обложка, подборки по всей Москве, первые вопросы игры, округа, лоты, остальная игра
+        want(COVER, bot_media.cover_card)
+        for kind in lots.KINDS:
+            for limit in (FREE, SHOW):
+                key, make = self._list_card(kind, "", limit, today)
+                if key:
+                    want(key, make)
+        for s in games[:10]:
+            want(*self._game_card(s))
+        for kind in lots.KINDS:
+            for adm in self.snap.adms(kind, today):
+                for limit in (FREE, SHOW):
+                    want(*self._list_card(kind, adm, limit, today))
+        for kind in lots.KINDS:
+            for l in self.snap.open_lots(kind, None, today)[:PREWARM_LOTS]:
+                want(*self._lot_card(l))
+        for s in games[10:]:
+            want(*self._game_card(s))
+
+    def _list_card(self, kind: str, adm: str, limit: int, today: date):
+        found = self.snap.open_lots(kind, adm or None, today)
+        if not found:
+            return None, None
+        rows = found[:limit]
+        return (f"list:{kind}:{adm}:{limit}:{self.snap.date}",
+                lambda: bot_media.list_card(kind, adm, rows, len(found), self.snap.date))
+
+    def _lot_card(self, l: dict):
+        return f"lot:{l['id']}:{l['price']}", lambda: bot_media.lot_card(l)
+
+    def _game_card(self, s: dict):
+        return f"game:{s['id']}", lambda: bot_media.game_card(s)
 
     def is_member(self, uid: int) -> bool:
         """Подписан ли на канал. Если проверить нельзя (бот не администратор канала) — пускаем."""
@@ -421,7 +497,7 @@ class Gate:
     def welcome(self, chat_id) -> None:
         n = {k: len(self.snap.open_lots(k, None, self._today())) for k in lots.KINDS}
         have = f"\n\nСейчас в подборке: машино-мест — {n['parking']}, квартир — {n['flat']}." if any(n.values()) else ""
-        self.send(chat_id,
+        self.reply(chat_id,
                   "Город продаёт на торгах машино-места и квартиры, и часть лотов заметно дешевле соседних. "
                   "Здесь такие лоты: где, почём, на сколько ниже медианы района и до какого числа принимают заявки. "
                   "Можно включить уведомления о новых — по округу — или проверить чутьё в «Угадай цену» "
@@ -429,7 +505,7 @@ class Gate:
                   f"Лучшее за день и итоги торгов — в канале «{escape(self.name)}».",
                   [[_btn("Машино-места", "parking"), _btn("Квартиры", "flat")],
                    [_btn("Угадай цену", "g"), _btn("Уведомления", "alerts")],
-                   [_btn(f"Канал «{self.name}»", url=self.url)]])
+                   [_btn(f"Канал «{self.name}»", url=self.url)]], COVER, bot_media.cover_card)
 
     def show(self, chat_id, uid: int, kind: str, adm: str) -> None:
         today = self._today()
@@ -449,13 +525,14 @@ class Gate:
         if not member:
             text += (f"\n\nОстальные лоты, выбор округа и уведомления — для подписчиков канала "
                      f"«{escape(self.name)}». Подпишитесь и нажмите «Готово».")
-            return self.send(chat_id, text, self._subscribe_kb(f"{kind}:{adm}"))
+            return self.reply(chat_id, text, self._subscribe_kb(f"{kind}:{adm}"),
+                              *self._list_card(kind, adm, limit, today))
         adms = self.snap.adms(kind, today)
         kb = [[_btn(("· " if a == adm else "") + a, f"{kind}:{a}") for a in adms[i:i + 4]]
               for i in range(0, len(adms), 4)]
         kb.append([_btn("Уведомлять о новых" + (f" в {adm}" if adm else ""), f"a+:{kind}:{adm}")])
         kb.append([_btn("Все округа", kind), _btn("Угадай цену", "g"), _btn("Канал", url=self.url)])
-        self.send(chat_id, text, kb)
+        self.reply(chat_id, text, kb, *self._list_card(kind, adm, limit, today))
 
     def show_lot(self, chat_id, uid: int, lot_id: str) -> None:
         l = self.snap.find(lot_id)
@@ -466,8 +543,8 @@ class Gate:
             return self.send(chat_id, f"Карточка лота открывается подписчикам канала «{escape(self.name)}». "
                                       "Подпишитесь и нажмите «Готово».", self._subscribe_kb(f"lot:{lot_id}"))
         adm = l.get("adm") or ""
-        self.send(chat_id, lot_text(l), [[_btn("Похожие: " + _alert_name(l["kind"], adm), f"{l['kind']}:{adm}")],
-                                         [_btn("Уведомлять о таких", f"a+:{l['kind']}:{adm}")]])
+        self.reply(chat_id, lot_text(l), [[_btn("Похожие: " + _alert_name(l["kind"], adm), f"{l['kind']}:{adm}")],
+                                          [_btn("Уведомлять о таких", f"a+:{l['kind']}:{adm}")]], *self._lot_card(l))
 
     # -------- уведомления
 
@@ -534,6 +611,7 @@ class Gate:
         if self.snap.mtime is not None and self.snap.mtime != self.notified:
             self.notified = self.snap.mtime
             self.notify()
+            self.prewarm()
 
     # -------- игра
 
@@ -542,14 +620,17 @@ class Gate:
         if not pool:
             return self.send(chat_id, "Итогов для игры пока нет — загляните завтра.", [[_btn("Меню", "menu")]])
         last = self.store.score(uid)["last"]
-        s = self.rnd.choice([p for p in pool if p["id"] != last] or pool)
+        pool = [p for p in pool if p["id"] != last] or pool
+        drawn = [p for p in pool if self.cards and self.cards.ready(self._game_card(p)[0])]
+        s = self.rnd.choice(drawn if len(drawn) >= 5 else pool)   # с картинкой, если их уже набралось
         w = templates.WORDS[s["kind"]]
         opts, _ = game_options(s)
         text = (f"<b>Угадай цену</b>\n\n{w['one']}"
                 + (f", {templates.area(s['space'])}" if s.get("space") else "") + f"\n{_where(s)}\n"
                 f"Торги {templates.day(s['date'])}. Стартовая цена — <b>{templates.money(s['start'])}</b>.\n\n"
                 "За сколько продали?")
-        self.send(chat_id, text, [[_btn(templates.money(p), f"g:{s['id']}:{i}") for i, p in enumerate(opts)]])
+        self.reply(chat_id, text, [[_btn(templates.money(p), f"g:{s['id']}:{i}") for i, p in enumerate(opts)]],
+                   *self._game_card(s))
 
     def game_answer(self, chat_id, uid: int, sid: str, choice: str) -> None:
         s = self.snap.find_sold(sid)
@@ -583,6 +664,8 @@ class Gate:
                  f"подписаны на канал (по последней проверке): {s['members']}",
                  f"с уведомлениями: {s['alert_users']}", f"играли: {s['players']}, раундов: {s['rounds']}",
                  f"снимок: {self.snap.date or 'нет'}, лотов {len(self.snap.lots)}, итогов {len(self.snap.sold)}",
+                 "картинки: " + (f"нарисовано {len(list(self.cards.dir.glob('*.png'))) if self.cards.dir.exists() else 0}, в очереди {len(self.cards.pending)}"
+                                 if self.cards and self.cards.on else "выключены (нет Chromium или Pillow)"),
                  "", "<b>Откуда пришли</b> (метка /start):"]
         lines += [f"{escape(src)}: {n} (подписаны {m or 0})" for src, n, m in s["sources"]]
         return "\n".join(lines)
@@ -626,8 +709,13 @@ def from_env(env=os.environ) -> tuple[Gate, Bot]:
     url = env.get("PARKAN_CHANNEL_URL", DEFAULT_CHANNEL_URL).strip() or DEFAULT_CHANNEL_URL
     state = Path(env.get("PARKAN_CHANNEL_STATE", "channel_state"))
     admins = [a for a in re.split(r"[,\s]+", env.get("PARKAN_BOT_ADMINS", "")) if a.isdigit()]
-    gate = Gate(bot, Snapshot(env.get("PARKAN_BOT_LOTS") or state / "bot" / "lots.json"),
-                Store(env.get("PARKAN_BOT_DB") or "bot.sqlite"), url,
+    db = env.get("PARKAN_BOT_DB") or "bot.sqlite"
+    log = lambda msg: print(msg, file=sys.stderr, flush=True)   # noqa: E731
+    cards = None if env.get("PARKAN_BOT_CARDS") == "0" else \
+        bot_media.Cards(env.get("PARKAN_BOT_CARDS") or Path(db).parent / "cards", log=log)
+    gate = Gate(bot, Snapshot(env.get("PARKAN_BOT_LOTS") or state / "bot" / "lots.json"), Store(db), url,
                 chat=env.get("PARKAN_CHANNEL_CHAT") or None, admins=admins,
-                gate=env.get("PARKAN_BOT_GATE", "1") != "0", now=now_msk)
+                gate=env.get("PARKAN_BOT_GATE", "1") != "0", now=now_msk, log=log, cards=cards)
+    log("Картинки: " + ("рисую в фоне, папка " + str(cards.dir) if cards and cards.on
+                        else "выключены — нет Chromium или Pillow (pip install -e '.[channel]', apt install chromium)"))
     return gate, bot

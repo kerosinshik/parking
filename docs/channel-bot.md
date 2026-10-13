@@ -52,8 +52,20 @@ sudo systemctl restart poputny-bot
 ```bash
 cd /home/user-bot/torgi_moskva
 git pull origin claude/exciting-wright-7y44ub
-.venv/bin/pip install -q -e .
+.venv/bin/pip install -q -e '.[bot]'
 sudo systemctl restart poputny-bot
+```
+
+Картинки (один раз). Chromium от Playwright, а не системный: на Ubuntu системный ставится через snap,
+а snap-версия не видит временные файлы службы.
+
+```bash
+cd /home/user-bot/torgi_moskva
+.venv/bin/pip install -q -e '.[bot]'                                          # под user-bot
+sudo /home/user-bot/torgi_moskva/.venv/bin/python -m playwright install-deps chromium   # под пользователем с sudo
+.venv/bin/python -m playwright install chromium                               # под user-bot
+sudo systemctl restart poputny-bot
+journalctl -u poputny-bot -n 30 --no-pager | grep -i картинк                  # «Картинки: рисую в фоне…»
 ```
 
 Обновить снимок. `channel-export` запускается там, где есть журнал Пульса и итоги торгов (облачный запуск канала),
@@ -81,6 +93,23 @@ PARKAN_BOT_DB=/home/user-bot/torgi_moskva/bot.sqlite
 
 Если служба собрана из `deploy/poputny-bot.service`, в ней должны стоять пути `/home/user-bot/...`
 и не должно быть `ProtectHome=true`: эта настройка закрывает `/home`, и бот не прочитает ни код, ни снимок.
+
+## Картинки
+
+Те же карточки, что в канале (`html_cards`, макеты Claude Design): обложка в приветствии, подборка списком
+с картой районов, карточка лота, вопрос игры (старт и место видны, итог нет). Код — `parkan/channel/bot_media.py`.
+
+Холодный старт Chromium занимает 1–5 с, а бот должен отвечать сразу, поэтому картинку бот никогда не ждёт.
+Если карточка готова, уходит фото с подписью (длинный текст — следом отдельным сообщением). Если нет, ответ
+идёт текстом, а карточка рисуется вне очереди и в следующий раз будет картинкой. После обновления снимка
+фоновый поток заранее рисует около 180 карточек: обложку, подборки по Москве и округам, 20 лучших лотов
+каждого типа, 100 вопросов игры. На машине уровня VPS это занимает около 4 минут. Игра выбирает вопросы
+с готовой картинкой, когда их набралось хотя бы пять. Отправленный файл запоминается по `file_id` Telegram
+и повторно не загружается. Карточки старше 3 дней удаляются.
+
+Нужны Pillow и Chromium (`pip install -e '.[bot]'`, `python -m playwright install chromium`). Без них бот
+работает текстом, в журнале пишет «Картинки: выключены». Папка — `PARKAN_BOT_CARDS` (по умолчанию `cards/`
+рядом с базой), `PARKAN_BOT_CARDS=0` выключает картинки. `/stats` показывает, сколько нарисовано и сколько в очереди.
 
 ## Данные
 
@@ -157,6 +186,7 @@ curl -fsSL https://raw.githubusercontent.com/kerosinshik/parking/main/deploy/ins
 | `PARKAN_BOT_LOTS` | файл снимка, по умолчанию `channel_state/bot/lots.json` |
 | `PARKAN_BOT_DB` | база бота, по умолчанию `bot.sqlite` в рабочей папке |
 | `PARKAN_BOT_GATE` | `0` — всё открыто без подписки |
+| `PARKAN_BOT_CARDS` | папка картинок (по умолчанию `cards/` рядом с базой); `0` — без картинок |
 | `PARKAN_CHANNEL_NAME` | название канала в текстах, по умолчанию «Попутный Метр» |
 
 ## Что дальше
