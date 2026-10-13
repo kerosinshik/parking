@@ -127,6 +127,28 @@ parkan channel-export --state-dir <журнал Пульса> \
 бот перечитывает его и рассылает уведомления о лотах, которых раньше не было (первый снимок только
 запоминается как точка отсчёта).
 
+## Обновление лотов
+
+Цепочка: расписание «Попутный Метр — черновики дня» (облако, 7:20 МСК) → `channel-export` → коммит
+`channel_state/bot/lots.json` в ветку `data` → cron на VPS раз в 30 минут делает `git pull` → бот замечает
+новый файл, рассылает уведомления и рисует карточки. Перезапускать бота не нужно.
+
+Шаг для расписания вставляется после шага 2. Добавить его можно только из сессии самого расписания:
+
+> 2а. Снимок для бота-дорвея (docs/channel-bot.md): если команда есть (`python3 -m parkan.cli channel-export --help`
+> завершается с кодом 0), выполни `python3 -m parkan.cli channel-export --state-dir /home/user/parking-data/state
+> --results /home/user/parking-data/results/torgi-mashinomesta.csv,/home/user/parking-data/results/torgi-kvartiry.csv
+> --out /home/user/parking-data/channel_state/bot/lots.json`. Команды нет — пропусти шаг и упомяни в итоге. Сбой шага
+> не прерывает остальные; файл коммитится в шаге 6 вместе с channel_state/. В итог добавь строку channel-export.
+
+Расписание работает с `main`, поэтому шаг заработает после слияния ветки бота. До этого он пропускается.
+
+Cron на VPS (под `user-bot`, `crontab -e`):
+
+```
+*/30 * * * * git -C /home/user-bot/torgi_moskva-data pull -q --ff-only
+```
+
 ## Установка на VPS
 
 Быстрый путь — одна команда от root на сервере (Debian/Ubuntu). Она ставит пакеты, создаёт пользователя `parkan`,
