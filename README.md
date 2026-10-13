@@ -225,4 +225,13 @@ parkan channel-draft --results results/torgi-mashinomesta.csv            # пр�
 parkan channel-draft --results results/torgi-mashinomesta.csv --send     # в кухню (TELEGRAM_BOT_TOKEN, TELEGRAM_DRAFT_CHAT)
 ```
 
-Стратегия, архитектура, настройка и текущее состояние — [docs/channel.md](docs/channel.md).
+Бот-дорвей канала (подборки лотов по округам, уведомления о новых, игра «Угадай цену»; полная подборка —
+подписчикам канала) работает постоянно на своём сервере:
+
+```bash
+parkan channel-export --results <итоги машино-мест>,<итоги квартир>   # снимок для бота (ежедневно)
+parkan channel-bot                                                   # сам бот, long polling (systemd)
+```
+
+Стратегия, архитектура, настройка и текущее состояние — [docs/channel.md](docs/channel.md),
+бот и установка на VPS — [docs/channel-bot.md](docs/channel-bot.md).

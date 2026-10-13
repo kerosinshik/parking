@@ -1,0 +1,23 @@
+# Бот-дорвей канала «Попутный Метр» (docs/channel-bot.md).
+# Установка: sudo cp deploy/poputny-bot.service /etc/systemd/system/ && sudo systemctl enable --now poputny-bot
+[Unit]
+Description=Бот-дорвей канала «Попутный Метр»
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=parkan
+WorkingDirectory=/srv/parking
+EnvironmentFile=/srv/parking/.env
+ExecStart=/srv/parking/.venv/bin/parkan channel-bot
+Restart=always
+RestartSec=10
+# бот только читает снимок и пишет свою базу
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/poputny-bot
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
