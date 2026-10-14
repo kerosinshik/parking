@@ -169,6 +169,38 @@ def cmd_channel_lint(a, con) -> int:
     return 1 if bad else 0
 
 
+def cmd_channel_split_buttons(a, con) -> int:
+    """Черновики, отправленные с кнопками под самим сообщением (до 14.10.2026): снять кнопки и прислать их
+    отдельным ответом, чтобы черновик пересылался в канал без них. Обработанные помечаются в kitchen.json."""
+    chat = a.chat or os.environ.get("TELEGRAM_DRAFT_CHAT")
+    if not chat:
+        print("Не задан чат кухни: --chat или TELEGRAM_DRAFT_CHAT", file=sys.stderr)
+        return 1
+    bot = Bot(os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+    path = Path(a.channel_state) / market_check.KITCHEN
+    kitchen = market_check._load(path, {})
+    since = a.since or "0000-00-00"
+    todo = [(mid, e) for mid, e in kitchen.items() if e.get("sent", "") >= since and not e.get("split")]
+    done, failed = 0, 0
+    for mid, e in todo:
+        markup = market_check.reply_markup(e["lot"])
+        try:
+            bot.call("editMessageReplyMarkup", {"chat_id": chat, "message_id": mid,
+                                                "reply_markup": json.dumps({"inline_keyboard": []})})
+            btn = bot.send_buttons(chat, int(mid), market_check.BUTTONS_TEXT, markup) if markup else None
+        except Exception as ex:
+            print(f"  {mid}: {ex}", file=sys.stderr)
+            failed += 1
+            continue
+        e["split"] = True
+        if (btn or {}).get("message_id"):
+            kitchen[str(btn["message_id"])] = dict(e, split=True)
+        done += 1
+    path.write_text(json.dumps(kitchen, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"Кнопки вынесены в отдельные сообщения: {done}, ошибок: {failed}")
+    return 1 if failed else 0
+
+
 def cmd_channel_check(a, con) -> int:
     """Проверка настройки: токен, доступ бота к кухне, права на публикацию."""
     chat = a.chat or os.environ.get("TELEGRAM_DRAFT_CHAT")
@@ -359,6 +391,13 @@ def register(sub) -> None:
         sp.add_argument("--channel-state", default=os.environ.get("PARKAN_CHANNEL_STATE", "channel_state"))
         sp.add_argument("--chat", help="чат для черновиков (иначе TELEGRAM_DRAFT_CHAT)")
         sp.set_defaults(fn=fn, track=True)
+
+    sp = sub.add_parser("channel-split-buttons",
+                        help="снять кнопки с отправленных черновиков и прислать их отдельным ответом")
+    sp.add_argument("--channel-state", default=os.environ.get("PARKAN_CHANNEL_STATE", "channel_state"))
+    sp.add_argument("--chat", help="чат кухни (иначе TELEGRAM_DRAFT_CHAT)")
+    sp.add_argument("--since", help="только черновики, отправленные с этой даты (ГГГГ-ММ-ДД)")
+    sp.set_defaults(fn=cmd_channel_split_buttons, track=True)
 
     sp = sub.add_parser("channel-check", help="проверить бота и доступ к кухне")
     sp.add_argument("--chat", help="чат для черновиков (иначе TELEGRAM_DRAFT_CHAT)")

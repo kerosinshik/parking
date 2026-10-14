@@ -128,3 +128,21 @@ def test_parking_listings_compare_by_lot_price():
     card = mc.card(PARKING, c)
     assert card["type"] == "parking" and card["headline_sub"] == "старт к объявлениям рядом"
     assert card["price_sub"] == "13,2 м² · в объявлениях 1,90–2,30 млн ₽ (2)"
+
+
+def test_split_buttons_moves_keyboard_to_reply(tmp_path, monkeypatch):
+    from parkan.cli import main
+    from parkan.channel import market_check
+    state = tmp_path / "ch"
+    market_check.remember(state, 55, "lot:x", "lot", LOT, date(2026, 10, 14))
+    market_check.remember(state, 44, "lot:old", "lot", LOT, date(2026, 10, 10))
+    t = _send(tmp_path, monkeypatch, [(200, b'{"ok": true, "result": true}'),
+                                      (200, b'{"ok": true, "result": {"message_id": 56}}')])
+    args = ["channel-split-buttons", "--channel-state", str(state), "--since", "2026-10-14"]
+    assert main(args) == 0
+    assert [c[0] for c in t.calls] == ["editMessageReplyMarkup", "sendMessage"]
+    assert b'"inline_keyboard": []' in t.calls[0][1] and "ЦИАН — рядом".encode() in t.calls[1][1]
+    kitchen = json.loads((state / "kitchen.json").read_text(encoding="utf-8"))
+    assert kitchen["55"]["split"] and kitchen["56"]["key"] == "lot:x" and not kitchen["44"].get("split")
+    t = _send(tmp_path, monkeypatch, [])
+    assert main(args) == 0 and t.calls == []                     # повторный запуск ничего не трогает

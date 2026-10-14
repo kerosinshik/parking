@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python3 -m parkan.cli channel-send *)",
-      "Bash(python3 -m parkan.cli channel-market *)"
+      "Bash(python3 -m parkan.cli channel-market *)",
+      "Bash(python3 -m parkan.cli channel-split-buttons *)"
     ]
   }
 }
