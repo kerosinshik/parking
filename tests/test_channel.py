@@ -118,7 +118,8 @@ def test_drafts_all_rubrics_and_registry(con, tmp_path):
     by = {}
     for p in posts:
         by.setdefault(p.rubric, []).append(p)
-    assert set(by) == {"lot", "drop", "house", "sold", "nofight"}  # неделя — по понедельникам, итоги недели — по пятницам
+    # срез — по вторникам и четвергам, две недели вперёд — по четвергам, итоги недели — по пятницам
+    assert set(by) == {"lot", "drop", "house", "sold", "nofight", "snapshot"}
     texts = "\n".join(p.text for p in posts)
     assert "Машино-место на 40 % дешевле района" in texts and "Квартира на 40 % дешевле района за м²" in texts
     assert "📉 <b>Город снизил стартовую цену на 25 %</b>" in texts and "2,00 млн ₽ → <b>1,50 млн ₽</b>" in texts
@@ -141,7 +142,7 @@ def test_week_and_weekstats(con, tmp_path):
     policy = dict(content.POLICY, week_min_lots=1)
     week = content.drafts(con, tmp_path, date(2026, 10, 5), rubrics=("week",), policy=policy)
     assert [p.key for p in week] == ["week:parking:2026-W41"]
-    assert "Неделя вперёд: машино-места" in week[0].text and "ул. Дешёвая, 1" in week[0].text
+    assert "Две недели вперёд: машино-места" in week[0].text and "до 19 октября" in week[0].text and "ул. Дешёвая, 1" in week[0].text
     assert week[0].card["template"] == "list" and week[0].card["rows"][0]["lead"] == "−40%"
     stats = content.drafts(con, tmp_path, date(2026, 10, 8), results_path=results_csv(tmp_path), rubrics=("weekstats",))
     assert [p.key for p in stats] == ["weekstats:parking:2026-W41", "weekstats:flat:2026-W41"]
@@ -149,6 +150,44 @@ def test_week_and_weekstats(con, tmp_path):
     assert "Продано: 2 из 3 торгов" in park.text and "без торга: 1 (50 %)" in park.text
     assert park.card["stats"][0]["num"] == "50%" and park.card["stats"][1]["num"] == "×2,9"
     assert park.card["headline"] == "2" and park.card["deadline"] == "2–8 октября"
+
+
+def test_default_rubrics_by_weekday():
+    days = {d: content.default_rubrics(date(2026, 10, 12 + d)) for d in range(7)}   # 12.10.2026 — понедельник
+    assert all("deadline" in r and "lot" in r for r in days.values())
+    assert [d for d, r in days.items() if "snapshot" in r] == [1, 3]
+    assert [d for d, r in days.items() if "week" in r] == [3]
+    assert [d for d, r in days.items() if "weekstats" in r] == [4]
+
+
+def test_deadline_and_snapshot(con, tmp_path):
+    journal(con, tmp_path)
+    policy = dict(content.POLICY, deadline_min_lots=1)
+    dl = content.drafts(con, tmp_path, date(2026, 10, 6), rubrics=("deadline",), policy=policy)
+    assert [p.key for p in dl] == ["deadline:parking:2026-10-09"]          # последний день заявок через 3 дня
+    assert "Заявки заканчиваются: машино-места" in dl[0].text and "ул. Дешёвая, 1" in dl[0].text
+    assert dl[0].facts["facts"]["applications_until"] == "9 октября" and dl[0].card["template"] == "list"
+    assert content.drafts(con, tmp_path, date(2026, 10, 5), rubrics=("deadline",), policy=policy) == []
+    snap = content.drafts(con, tmp_path, date(2026, 10, 6), results_path=results_csv(tmp_path), rubrics=("snapshot",))
+    assert [p.key for p in snap] == ["snapshot:parking:2026-10-06", "snapshot:flat:2026-10-06"]
+    park = snap[0]
+    assert "В продаже: 9 машино-мест" in park.text and park.card["template"] == "stats"
+    assert park.facts["facts"]["sold"] == "2" and park.facts["facts"]["sold_at_start_share"] == "50 %"
+    assert "₽/м²" in snap[1].facts["facts"]["median_start"]
+
+
+def test_lot_of_the_day_falls_back_to_lots_on_sale(con, tmp_path):
+    journal(con, tmp_path)
+    day = date(2026, 10, 6)
+    new = content.drafts(con, tmp_path, day, rubrics=("lot",))
+    assert {p.facts["facts"]["address"] for p in new} == {"ул. Дешёвая, 1", "ул. Квартирная, 2"}
+    registry = {p.key: "2026-10-05" for p in new}                         # новые ушли вчера
+    spare = content.drafts(con, tmp_path, day, rubrics=("lot",), registry=registry)
+    assert [p.facts["facts"]["address"] for p in spare] == ["ул. 0"]     # новых нет — лучший из лотов в продаже
+    registry.update({p.key: "2026-10-06" for p in spare})
+    assert content.drafts(con, tmp_path, day, rubrics=("lot",), registry=registry) == []
+    today_sent = {p.key: "2026-10-06" for p in new}                       # оба «лота дня» уже ушли сегодня
+    assert content.drafts(con, tmp_path, day, rubrics=("lot",), registry=today_sent) == []
 
 
 def test_text_is_html_escaped():
@@ -206,8 +245,8 @@ def test_cli_channel_draft_sends_and_remembers(con, tmp_path, monkeypatch):
     assert main(args) == 0
     day = tmp_path / "out" / "2026-10-06"
     manifest = json.loads((day / "drafts.json").read_text(encoding="utf-8"))
-    assert {m["rubric"] for m in manifest} == {"lot", "drop", "house", "sold", "nofight"}
-    assert (day / "01-lot.html").exists() and len(t.calls) == len(manifest)
+    assert {m["rubric"] for m in manifest} == {"lot", "drop", "house", "sold", "nofight", "snapshot"}
+    assert (day / "01-snapshot.html").exists() and len(t.calls) == len(manifest)
     if html_cards.available():
         assert all(m["card"] for m in manifest)
     assert set(json.loads((tmp_path / "ch" / "drafted.json").read_text())) == {m["key"] for m in manifest}

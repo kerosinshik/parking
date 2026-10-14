@@ -136,8 +136,20 @@ def price_drops(con, state_dir, today: date, min_drop: float) -> list[dict]:
     return _finish(rows)
 
 
-def week_ahead(con, today: date, min_discount: float, n: int) -> dict[str, list[dict]]:
-    """По типам: лоты с дедлайном заявок в ближайшие 7 дней, дешевле медианы; по адресу — один."""
+def best_deals(con, today: date, min_discount: float, min_days_left: int = 2) -> list[dict]:
+    """Все лоты в продаже дешевле медианы на min_discount и больше (не только новые); по адресу — один.
+
+    Запас для «Лота дня», когда новых выгодных лотов за сутки нет. До конца заявок — хотя бы min_days_left дней."""
+    return _finish(_rows(con, """
+        SELECT * EXCLUDE (rn) FROM (
+            SELECT *, row_number() OVER (PARTITION BY kind, address ORDER BY discount DESC, price) AS rn
+            FROM ch_sale WHERE discount >= ? AND end_d >= ?
+        ) WHERE rn = 1 ORDER BY discount DESC
+    """, [min_discount, today + timedelta(days=min_days_left)]))
+
+
+def ahead(con, date_from: date, date_to: date, min_discount: float, n: int) -> dict[str, list[dict]]:
+    """По типам: лоты дешевле медианы, приём заявок по которым закрывается с date_from по date_to; по адресу — один."""
     out = {}
     for kind in KINDS:
         out[kind] = _finish(_rows(con, """
@@ -145,7 +157,34 @@ def week_ahead(con, today: date, min_discount: float, n: int) -> dict[str, list[
                 SELECT *, row_number() OVER (PARTITION BY address ORDER BY discount DESC) AS rn
                 FROM ch_sale WHERE kind = ? AND end_d BETWEEN ? AND ? AND discount >= ?
             ) WHERE rn = 1 ORDER BY discount DESC LIMIT ?
-        """, [kind, today, today + timedelta(days=7), min_discount, n]))
+        """, [kind, date_from, date_to, min_discount, n]))
+    return out
+
+
+def week_ahead(con, today: date, min_discount: float, n: int, days: int = 7) -> dict[str, list[dict]]:
+    """По типам: лоты с дедлайном заявок в ближайшие days дней (не сегодня), дешевле медианы; по адресу — один."""
+    return ahead(con, today + timedelta(days=1), today + timedelta(days=days), min_discount, n)
+
+
+def snapshot(con) -> dict[str, dict]:
+    """Срез лотов в продаже по типам: число, медиана (квартиры — ₽/м²), доля дешевле медианы на 25 %+, округа."""
+    out = {}
+    for kind in KINDS:
+        metric = "price / space" if kind == "flat" else "price"
+        row = _rows(con, f"""
+            SELECT count(*) AS n, median({metric}) AS med,
+                   count(*) FILTER (WHERE discount >= 0.25) AS cheap,
+                   count(DISTINCT address) AS houses
+            FROM ch_sale WHERE kind = ? AND (? = 'parking' OR space > 0)
+        """, [kind, kind])[0]
+        if not row["n"]:
+            continue
+        row["adm"] = _rows(con, f"""
+            SELECT adm, count(*) AS n, median({metric}) AS med FROM ch_sale
+            WHERE kind = ? AND adm IS NOT NULL AND (? = 'parking' OR space > 0)
+            GROUP BY adm HAVING count(*) >= 5 ORDER BY med
+        """, [kind, kind])
+        out[kind] = row
     return out
 
 

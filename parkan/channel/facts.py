@@ -11,10 +11,12 @@ from datetime import timedelta
 from . import templates as t
 
 TITLES = {"lot": "Лот дня", "drop": "Снижение цены", "house": "Целый дом", "sold": "Продано дороже",
-          "nofight": "Без борьбы", "week": "Неделя вперёд", "weekstats": "Итоги недели",
+          "nofight": "Без борьбы", "week": "Две недели вперёд", "weekstats": "Итоги недели",
+          "deadline": "Заявки заканчиваются", "snapshot": "Срез торгов",
           "torgi": "Старт ниже итогов", "market": "Рядом на рынке"}
 TAGS = {"lot": "#лотдня", "drop": "#снижение", "house": "#целыйдом", "sold": "#итоги", "nofight": "#безборьбы",
-        "week": "#неделявперёд", "weekstats": "#итогинедели", "torgi": "#стартнижеитогов", "market": "#рядомнарынке"}
+        "week": "#двенеделивперёд", "weekstats": "#итогинедели",
+        "deadline": "#заявкизаканчиваются", "snapshot": "#срезторгов", "torgi": "#стартнижеитогов", "market": "#рядомнарынке"}
 
 
 def _clean(d: dict) -> dict:
@@ -94,12 +96,40 @@ def nofight(r: dict, same: int) -> dict:
                    same_house_same_day=f"ещё {same} {t.plural(same, w['forms'])}" if same else None)
 
 
-def week(kind: str, lots: list[dict], today) -> dict:
-    return _base("week", kind, period=f"заявки закрываются до {t.day(today + timedelta(days=7))}",
+def _ahead(lots: list[dict]) -> list[dict]:
+    return [_clean({"discount": f"{t.pct(l['discount'])} %", "price": t.money(l["price"]), "area": t.area(l.get("space")),
+                    "address": l["place"], "district": t.district(l.get("district")),
+                    "applications_until": t.day(l.get("end_d")), "lot_url": l.get("url")}) for l in lots]
+
+
+def week(kind: str, lots: list[dict], today, days: int = 14) -> dict:
+    return _base("week", kind, period=f"заявки закрываются до {t.day(today + timedelta(days=days))}",
                  compared_with="цена за м² с медианой района" if kind == "flat" else "цена лота с медианой района",
-                 lots=[_clean({"discount": f"{t.pct(l['discount'])} %", "price": t.money(l["price"]), "area": t.area(l.get("space")),
-                               "address": l["place"], "district": t.district(l.get("district")),
-                               "applications_until": t.day(l.get("end_d")), "lot_url": l.get("url")}) for l in lots])
+                 lots=_ahead(lots))
+
+
+def deadline(kind: str, lots: list[dict], until) -> dict:
+    return _base("deadline", kind, applications_until=t.day(until),
+                 compared_with="цена за м² с медианой района" if kind == "flat" else "цена лота с медианой района",
+                 lots=_ahead(lots))
+
+
+def snapshot(kind: str, st: dict) -> dict:
+    med = (lambda v: t.money(v)) if kind == "parking" else (lambda v: f"{t.rub(v)}/м²")
+    return _base("snapshot", kind, date=t.day(st["today"]), on_sale=str(st["n"]), houses=str(st["houses"]),
+                 median_start=med(st["med"]),
+                 median_explained="медиана стартовой цены " + ("за м² " if kind == "flat" else "")
+                                  + "всех лотов этого типа в продаже на торгах города (не рыночная цена)",
+                 cheaper_than_district=str(st["cheap"]), cheaper_threshold="25 %",
+                 cheaper_explained="лоты, у которых старт ниже медианы лотов того же типа в своём районе на 25 % и больше",
+                 cheapest_okrug=_clean({"okrug": t.okrug(st["adm_low"]["adm"]), "median": med(st["adm_low"]["med"]),
+                                        "lots": str(st["adm_low"]["n"])}) if st.get("adm_low") else None,
+                 priciest_okrug=_clean({"okrug": t.okrug(st["adm_high"]["adm"]), "median": med(st["adm_high"]["med"]),
+                                        "lots": str(st["adm_high"]["n"])}) if st.get("adm_high") else None,
+                 results_period=f"последние {st['days']} дней" if st.get("sold") else None,
+                 sold=str(st["sold"]) if st.get("sold") else None,
+                 sold_at_start_share=f"{t.pct(st['at_start'] / st['sold'])} %" if st.get("sold") else None,
+                 median_growth=f"×{t.num(st['growth'], 2)}" if st.get("growth") else None)
 
 
 def weekstats(kind: str, st: dict) -> dict:

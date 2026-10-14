@@ -302,27 +302,84 @@ def nofight_card(r: dict, same: int) -> dict:
 
 # ---------------------------------------------------------------- 6. Неделя вперёд
 
-def week(kind: str, lots: list[dict], today: date) -> str:
+def _ahead_lines(lots: list[dict]) -> list[str]:
+    return [f"{i}. <b>−{pct(l['discount'])} %</b> · {money(l['price'])}"
+            + (f" · {area(l['space'])}" if l.get("space") else "")
+            + f" · до {day(l['end_d'])}\n   {escape(l['place'])}"
+            + (f" ({escape(district(l.get('district')))})" if l.get("district") else "")
+            + (f" · {link(l.get('url'), 'лот')}" if l.get("url") else "") for i, l in enumerate(lots, 1)]
+
+
+def _ahead_rows(lots: list[dict]) -> list[dict]:
+    return [{"lead": f"−{pct(l['discount'])}%", "price": money(l["price"]), "place": district(l.get("district")),
+             "until": f"до {short_day(l['end_d'])}"} for l in lots]
+
+
+def week(kind: str, lots: list[dict], today: date, days: int = 14) -> str:
     w = WORDS[kind]
-    lines = [f"🗓 <b>Неделя вперёд: {w['forms'][1]}</b>",
-             "Лоты дешевле медианы района, приём заявок по которым закрывается в ближайшие 7 дней.", ""]
-    for i, l in enumerate(lots, 1):
-        lines.append(f"{i}. <b>−{pct(l['discount'])} %</b> · {money(l['price'])}"
-                     + (f" · {area(l['space'])}" if l.get("space") else "")
-                     + f" · до {day(l['end_d'])}\n   {escape(l['place'])}"
-                     + (f" ({escape(district(l.get('district')))})" if l.get("district") else "")
-                     + (f" · {link(l.get('url'), 'лот')}" if l.get("url") else ""))
-    return _post(lines, ["#неделявперёд", w["tag"]])
+    lines = [f"🗓 <b>Две недели вперёд: {w['forms'][1]}</b>",
+             f"Лоты дешевле медианы района, приём заявок по которым закрывается до {day(today + timedelta(days=days))}.", ""]
+    return _post(lines + _ahead_lines(lots), ["#двенеделивперёд", w["tag"]])
 
 
-def week_card(kind: str, lots: list[dict], today: date) -> dict:
+def week_card(kind: str, lots: list[dict], today: date, days: int = 14) -> dict:
     w = WORDS[kind]
     n = len(lots)
-    return _card("list", "НЕДЕЛЯ ВПЕРЁД", headline=str(n),
-                 headline_sub=f"{plural(n, w['forms'])} дешевле района — заявки закрываются на этой неделе",
-                 deadline=f"до {day(today + timedelta(days=7))}", districts=[l.get("district") for l in lots],
-                 rows=[{"lead": f"−{pct(l['discount'])}%", "price": money(l["price"]),
-                        "place": district(l.get("district")), "until": f"до {short_day(l['end_d'])}"} for l in lots])
+    return _card("list", "ДВЕ НЕДЕЛИ ВПЕРЁД", headline=str(n),
+                 headline_sub=f"{plural(n, w['forms'])} дешевле района — заявки закрываются в ближайшие две недели",
+                 deadline=f"до {day(today + timedelta(days=days))}", districts=[l.get("district") for l in lots],
+                 rows=_ahead_rows(lots))
+
+
+# ---------------------------------------------------------------- 6а. Заявки заканчиваются
+
+def deadline(kind: str, lots: list[dict], until: date) -> str:
+    w = WORDS[kind]
+    lines = [f"⏳ <b>Заявки заканчиваются: {w['forms'][1]}</b>",
+             f"Лоты дешевле медианы района, приём заявок по которым закрывается {day(until)}.", ""]
+    return _post(lines + _ahead_lines(lots), ["#заявкизаканчиваются", w["tag"]])
+
+
+def deadline_card(kind: str, lots: list[dict], until: date) -> dict:
+    w = WORDS[kind]
+    n = len(lots)
+    return _card("list", "ЗАЯВКИ ЗАКАНЧИВАЮТСЯ", headline=str(n),
+                 headline_sub=f"{plural(n, w['forms'])} дешевле района — последний день заявок {day(until)}",
+                 deadline=f"до {day(until)}", districts=[l.get("district") for l in lots], rows=_ahead_rows(lots))
+
+
+# ---------------------------------------------------------------- 6б. Срез торгов
+
+def okrug(s: str | None) -> str:
+    """«Новомосковский административный округ» → «Новомосковский округ»."""
+    return re.sub(r"\s*административный округ$", " округ", s or "").strip()
+
+
+def _snap_med(kind: str, v) -> str:
+    return money(v) if kind == "parking" else rub(v) + "/м²"
+
+
+def snapshot(kind: str, st: dict) -> str:
+    w = WORDS[kind]
+    lines = [f"📊 <b>Срез торгов: {w['forms'][1]}, {day(st['today'])}</b>", "",
+             f"В продаже: {st['n']} {plural(st['n'], w['forms'])} в {st['houses']} домах",
+             f"Медиана старта: {_snap_med(kind, st['med'])}",
+             f"Дешевле медианы района на 25 % и больше: {st['cheap']}",
+             (f"Дешевле всего — {okrug(st['adm_low']['adm'])} ({_snap_med(kind, st['adm_low']['med'])}), "
+              f"дороже всего — {okrug(st['adm_high']['adm'])} ({_snap_med(kind, st['adm_high']['med'])})") if st.get("adm_low") else None,
+             (f"За {st['days']} дней продано {st['sold']}, по стартовой цене — {pct(st['at_start'] / st['sold'])} %") if st.get("sold") else None]
+    return _post(lines, ["#срезторгов", w["tag"]])
+
+
+def snapshot_card(kind: str, st: dict) -> dict:
+    w = WORDS[kind]
+    stats = [{"num": str(st["cheap"]), "cap": "дешевле медианы района на 25 %+", "lime": True}]
+    if st.get("sold"):
+        stats.append({"num": f"{pct(st['at_start'] / st['sold'])}%", "cap": f"продано по старту за {st['days']} дней"})
+    return _card("stats", "СРЕЗ ТОРГОВ", headline=str(st["n"]),
+                 headline_sub=f"{plural(st['n'], w['forms'])} в продаже на торгах города",
+                 deadline=day(st["today"]), districts=st.get("districts") or [], stats=stats,
+                 foot=f"медиана старта — {_snap_med(kind, st['med'])}")
 
 
 # ---------------------------------------------------------------- 7. Итоги недели
