@@ -63,12 +63,17 @@ def test_send_remembers_and_channel_market_builds_draft(tmp_path, monkeypatch):
     (day / "drafts.json").write_text(json.dumps([{"key": "torgi:x", "rubric": "torgi", "facts": "01-torgi.facts.json",
                                                   "template": "01-torgi.html", "copy": "01-torgi.txt", "card": None,
                                                   "sent": False, "market_lot": LOT}]), encoding="utf-8")
-    t = _send(tmp_path, monkeypatch, [(200, b'{"ok": true, "result": {"message_id": 77}}')])
+    t = _send(tmp_path, monkeypatch, [(200, b'{"ok": true, "result": {"message_id": 77}}'),
+                                      (200, b'{"ok": true, "result": {"message_id": 78}}')])
     state = tmp_path / "ch"
     assert send_dir(day, state / "drafted.json", None, date(2026, 10, 13)) == 0
-    assert b"inline_keyboard" in t.calls[0][1] and "ЦИАН — рядом".encode() in t.calls[0][1]
+    # черновик — без кнопок (его пересылают в канал), кнопки — отдельным ответом на него
+    assert len(t.calls) == 2 and b"inline_keyboard" not in t.calls[0][1]
+    assert b"inline_keyboard" in t.calls[1][1] and "ЦИАН — рядом".encode() in t.calls[1][1]
+    assert b'"message_id": 77' in t.calls[1][1]
     kitchen = json.loads((state / "kitchen.json").read_text(encoding="utf-8"))
     assert kitchen["77"]["key"] == "torgi:x" and kitchen["77"]["lot"]["price"] == 17_080_000
+    assert kitchen["78"]["key"] == "torgi:x"                              # ответ на сообщение с кнопками тоже годится
 
     updates = {"ok": True, "result": [
         {"update_id": 5, "channel_post": {"message_id": 90, "chat": {"id": -100500},

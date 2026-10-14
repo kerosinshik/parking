@@ -104,14 +104,24 @@ def send_dir(day: Path, registry_path: Path, chat: str | None, today: date) -> i
         text = with_signature(text)
         lot = m.get("market_lot")
         try:
-            msg = bot.send_post(chat, text, day / m["card"] if m.get("card") else None,
-                                reply_markup=market_check.reply_markup(lot) if lot else None)
+            msg = bot.send_post(chat, text, day / m["card"] if m.get("card") else None)
         except Exception as e:   # один черновик не должен срывать остальные
             print(f"  {m['key']}: {e}", file=sys.stderr)
             failed += 1
             continue
-        if lot and (msg or {}).get("message_id"):   # ответ автора с объявлениями найдём по id этого сообщения
-            market_check.remember(registry_path.parent, msg["message_id"], m["key"], m["rubric"], lot, today)
+        markup = market_check.reply_markup(lot) if lot else None
+        if markup and (msg or {}).get("message_id"):
+            # кнопки — отдельным сообщением-ответом: черновик пересылается в канал без них;
+            # ответ автора с объявлениями найдём по id любого из двух сообщений
+            ids = [msg["message_id"]]
+            try:
+                btn = bot.send_buttons(chat, msg["message_id"], market_check.BUTTONS_TEXT, markup)
+                if (btn or {}).get("message_id"):
+                    ids.append(btn["message_id"])
+            except Exception as e:
+                print(f"  {m['key']}: кнопки не ушли: {e}", file=sys.stderr)
+            for mid in ids:
+                market_check.remember(registry_path.parent, mid, m["key"], m["rubric"], lot, today)
         m["sent"] = True
         sent.append(m["key"])
         how.append(source)

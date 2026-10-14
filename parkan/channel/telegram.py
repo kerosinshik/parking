@@ -75,6 +75,13 @@ class Bot:
         return self.call("sendMessage", {"chat_id": chat, "text": text, "parse_mode": "HTML", "reply_markup": reply_markup,
                                          "link_preview_options": json.dumps({"is_disabled": True})})
 
+    def send_buttons(self, chat: str, reply_to: int, text: str, reply_markup: str) -> dict:
+        """Служебное сообщение с кнопками ответом на черновик: сам черновик остаётся без кнопок,
+        его можно переслать в канал как есть (Telegram пересылает кнопки вместе с сообщением)."""
+        return self.call("sendMessage", {"chat_id": chat, "text": text, "reply_markup": reply_markup,
+                                         "reply_parameters": json.dumps({"message_id": reply_to}),
+                                         "link_preview_options": json.dumps({"is_disabled": True})})
+
     def reply(self, chat: str, message_id: int, text: str) -> dict:
         return self.call("sendMessage", {"chat_id": chat, "text": text,
                                          "reply_parameters": json.dumps({"message_id": message_id})})

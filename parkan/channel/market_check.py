@@ -62,6 +62,10 @@ def search_links(lot: dict) -> list[tuple[str, str]]:
     return out
 
 
+BUTTONS_TEXT = ("Проверить рынок рядом. Ответьте на черновик или на это сообщение ссылками на объявления — "
+                "по строке: ссылка, цена, площадь")
+
+
 def reply_markup(lot: dict) -> str | None:
     links = search_links(lot)
     if not links:
