@@ -168,6 +168,37 @@ def lot_card(r: dict) -> dict:
                  price_sub=" · ".join(x for x in price_sub if x), address=r["place"], district=r.get("district"))
 
 
+def torgi_card(r: dict, ref: dict) -> dict:
+    """«Старт ниже итогов района»: квартира в продаже, у которой стартовая цена м² заметно ниже медианы итоговых
+    цен проданных квартир района (market.torgi_reference). Подпись честно говорит, что сравнивается старт с итогами."""
+    m2 = r["price"] / r["space"]
+    where = {"дом": "в этом доме", "район": "района"}.get(ref["level"], "округа")
+    n = ref["n"]
+    return _card("lot", "СТАРТ НИЖЕ ИТОГОВ", type="flat", headline=f"−{pct(1 - m2 / ref['value'])}%",
+                 headline_sub=f"старт за м² к итогам торгов {where}",
+                 deadline=f"заявки до {day(r['end_d'])}" if r.get("end_d") else "", price=money(r["price"]),
+                 price_sub=f"старт {rub(m2)}/м² · {area(r['space'])} · медиана итогов {rub(ref['value'])}/м² "
+                           f"({n} {plural(n, ('сделка', 'сделки', 'сделок'))})",
+                 address=r["place"], district=r.get("district"))
+
+
+def torgi(r: dict, ref: dict) -> str:
+    """«Старт ниже итогов»: шаблонный текст (запасной, если Claude не написал свой)."""
+    m2 = r["price"] / r["space"]
+    where = {"дом": "в этом же доме", "район": "в районе"}.get(ref["level"], "в округе")
+    n = ref["n"]
+    return _post([
+        f"📉 <b>Старт на {pct(1 - m2 / ref['value'])} % ниже итогов торгов {where}</b>", "",
+        _where(r["place"], r.get("district")),
+        f"💰 <b>{money(r['price'])}</b> · {rub(m2)}/м² · {area(r['space'])}",
+        f"📊 Медиана итогов {where}: {rub(ref['value'])}/м² ({n} {plural(n, ('сделка', 'сделки', 'сделок'))}, "
+        f"{day(ref['since'])} – {day(ref['until'])})",
+        "Это стартовая цена: на аукционе она может вырасти.",
+        f"⏳ Заявки до {day(r.get('end_d'))}" if r.get("end_d") else None,
+        link(r.get("url")),
+    ], ["#стартнижеитогов", "#квартиры"])
+
+
 # ---------------------------------------------------------------- 2. Снижение цены
 
 def drop(r: dict) -> str:

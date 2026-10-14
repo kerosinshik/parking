@@ -63,12 +63,18 @@ class Bot:
             raise TelegramError(f"{method}: {data.get('description') or status}")
         raise TelegramError(f"{method}: превышено число попыток")
 
-    def send_post(self, chat: str, text: str, card_path=None) -> None:
-        """Карточка с подписью; если текст длиннее лимита подписи — карточка и текст отдельно."""
+    def send_post(self, chat: str, text: str, card_path=None, reply_markup: str | None = None) -> dict:
+        """Карточка с подписью; если текст длиннее лимита подписи — карточка и текст отдельно.
+
+        reply_markup — кнопки (JSON) под сообщением с текстом. Возвращает это сообщение (есть message_id)."""
         if card_path and len(text) <= CAPTION_LIMIT:
-            self.call("sendPhoto", {"chat_id": chat, "caption": text, "parse_mode": "HTML"}, {"photo": card_path})
-            return
+            return self.call("sendPhoto", {"chat_id": chat, "caption": text, "parse_mode": "HTML",
+                                           "reply_markup": reply_markup}, {"photo": card_path})
         if card_path:
             self.call("sendPhoto", {"chat_id": chat}, {"photo": card_path})
-        self.call("sendMessage", {"chat_id": chat, "text": text, "parse_mode": "HTML",
-                                  "link_preview_options": json.dumps({"is_disabled": True})})
+        return self.call("sendMessage", {"chat_id": chat, "text": text, "parse_mode": "HTML", "reply_markup": reply_markup,
+                                         "link_preview_options": json.dumps({"is_disabled": True})})
+
+    def reply(self, chat: str, message_id: int, text: str) -> dict:
+        return self.call("sendMessage", {"chat_id": chat, "text": text,
+                                         "reply_parameters": json.dumps({"message_id": message_id})})

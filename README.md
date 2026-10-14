@@ -223,6 +223,10 @@ parkan track-torgi --state-dir state --results results/torgi-mashinomesta.csv --
 pip install -e '.[channel]'
 parkan channel-draft --results results/torgi-mashinomesta.csv            # просмотр: channel_out/<дата>/
 parkan channel-draft --results results/torgi-mashinomesta.csv --send     # в кухню (TELEGRAM_BOT_TOKEN, TELEGRAM_DRAFT_CHAT)
+parkan market-add --file new.csv            # рыночные цены по районам → market/observations.csv
+parkan market-status                        # каких районов не хватает для сравнения квартир с рынком
+parkan market-rosstat                       # средние цены на жильё по Москве от Росстата → журнал рынка
+parkan market-page --out data/market.html   # страница «Рынок квартир»: журнал рынка и квартиры на торгах
 ```
 
 Бот-дорвей канала (подборки лотов по округам, уведомления о новых, игра «Угадай цену»; полная подборка —
