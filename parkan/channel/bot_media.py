@@ -134,3 +134,7 @@ def game_card(s: dict) -> dict:
                            price=templates.money(s["start"]),
                            price_sub=" · ".join(x for x in ("стартовая цена", templates.area(s.get("space"))) if x),
                            address=s["place"], district=s.get("district"))
+
+
+def house_card(h: dict) -> dict:
+    return dict(templates.house_card(h), kicker="ЦЕЛЫЙ ДОМ")
