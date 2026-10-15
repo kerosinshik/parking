@@ -143,9 +143,49 @@ class Snapshot:
     def find_sold(self, sid: str) -> dict | None:
         return next((s for s in self.sold if s["id"] == sid), None)
 
+
     def adms(self, kind: str, today: date) -> list[str]:
         have = {l.get("adm") for l in self.open_lots(kind, None, today)}
         return [a for a in ADM.values() if a in have]
+
+
+def _word(s: str) -> str:
+    return re.sub(r"[^a-zа-я0-9]+", "", (s or "").lower().replace("ё", "е"))
+
+
+class Campaigns:
+    """Метки роликов и постов вне Telegram: campaigns.json рядом со снимком, перечитывается, как и снимок.
+
+    {"ig01": {"lot": "20197917", "word": "можайка", "title": "Reels: Можайское ш., 45к1"}} —
+    ссылка t.me/<бот>?start=ig01 и кодовое слово «можайка» (для тех, кто нашёл бота поиском) открывают лот
+    и записываются в журнал переходов с меткой ig01."""
+
+    def __init__(self, path):
+        self.path, self.mtime, self.items = Path(path), None, {}
+
+    def refresh(self) -> None:
+        try:
+            m = self.path.stat().st_mtime
+        except FileNotFoundError:
+            self.mtime, self.items = None, {}
+            return
+        if m != self.mtime:
+            self.mtime, self.items = m, json.loads(self.path.read_text(encoding="utf-8"))
+
+    def get(self, tag: str | None) -> dict | None:
+        return self.items.get(tag) if tag else None
+
+    def by_word(self, text: str) -> str | None:
+        w = _word(text)
+        return next((t for t, c in self.items.items() if c.get("word") and _word(c["word"]) == w), None) if w else None
+
+
+def parse_start(payload: str | None) -> tuple[str | None, str | None]:
+    """Метка /start → (метка, id лота): «lot_42» → (lot_42, 42), «ig01-lot_42» → (ig01-lot_42, 42), «ig01» → (ig01, None)."""
+    if not payload:
+        return None, None
+    m = re.search(r"(?:^|[-_])lot_([A-Za-z0-9]+)$", payload)
+    return payload, (m.group(1) if m else None)
 
 
 # ---------------------------------------------------------------- хранилище
@@ -165,6 +205,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS game (uid INTEGER PRIMARY KEY, played INTEGER DEFAULT 0,
                 won INTEGER DEFAULT 0, streak INTEGER DEFAULT 0, best INTEGER DEFAULT 0, last TEXT);
             CREATE TABLE IF NOT EXISTS seen (id TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS clicks (ts TEXT, uid INTEGER, tag TEXT, via TEXT, new INTEGER);
         """)
         self.db.commit()
 
@@ -176,15 +217,34 @@ class Store:
         self.db.commit()
 
     # пользователи
-    def touch(self, u: dict, now: datetime, source: str | None = None) -> None:
-        """Отмечает пользователя; источник — первая метка /start, потом не меняется."""
+    def touch(self, u: dict, now: datetime, source: str | None = None) -> bool:
+        """Отмечает пользователя; источник — первая метка /start, потом не меняется. True — пользователь новый."""
         ts = now.isoformat(timespec="seconds")
+        new = not self.q("SELECT 1 FROM users WHERE id = ?", u["id"])
         self.x("""INSERT INTO users (id, username, first_name, source, started_at, last_seen, actions)
             VALUES (?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT (id) DO UPDATE SET username = excluded.username, first_name = excluded.first_name,
                 last_seen = excluded.last_seen, actions = actions + 1, blocked = 0,
                 source = coalesce(source, excluded.source)""",
                u["id"], u.get("username"), u.get("first_name"), source, ts, ts)
+        return new
+
+    def click(self, uid: int, now: datetime, tag: str, via: str, new: bool) -> None:
+        """Журнал переходов: каждое открытие по метке (via = start) или кодовому слову (via = word).
+
+        Новый — впервые запустил бота сейчас или в течение часа до перехода: кто нашёл бота поиском,
+        сначала жмёт «Старт», а кодовое слово присылает следующим сообщением."""
+        hour = (now - timedelta(hours=1)).isoformat(timespec="seconds")
+        new = new or bool(self.q("SELECT 1 FROM users WHERE id = ? AND started_at >= ?", uid, hour))
+        self.x("INSERT INTO clicks VALUES (?, ?, ?, ?, ?)", now.isoformat(timespec="seconds"), uid, tag, via, int(new))
+        self.x("UPDATE users SET source = coalesce(source, ?) WHERE id = ?", tag, uid)
+
+    def campaign_stats(self, limit: int = 15) -> list[tuple]:
+        """По меткам: переходов, людей, новых, из них подписаны на канал, первый и последний переход."""
+        return self.q("""SELECT c.tag, count(*), count(DISTINCT c.uid), count(DISTINCT CASE WHEN c.new = 1 THEN c.uid END),
+                count(DISTINCT CASE WHEN u.member = 1 THEN c.uid END), min(c.ts), max(c.ts)
+            FROM clicks c LEFT JOIN users u ON u.id = c.uid
+            GROUP BY 1 ORDER BY max(c.ts) DESC LIMIT ?""", limit)
 
     def set_member(self, uid: int, member: bool) -> None:
         self.x("UPDATE users SET member = ? WHERE id = ?", int(member), uid)
@@ -328,8 +388,9 @@ class Gate:
 
     def __init__(self, bot, snapshot: Snapshot, store: Store, channel_url: str, chat: str | None = None,
                  admins=(), gate: bool = True, clock=time.time, now=datetime.now, log=None, rnd=None,
-                 cards: bot_media.Cards | None = None):
+                 cards: bot_media.Cards | None = None, campaigns: Campaigns | None = None):
         self.bot, self.snap, self.store, self.cards = bot, snapshot, store, cards
+        self.campaigns = campaigns or Campaigns(Path(snapshot.path).with_name("campaigns.json"))
         self.url, self.chat = channel_url, chat or channel_chat(channel_url)
         self.admins, self.gate = {int(a) for a in admins}, gate and bool(self.chat)
         self.clock, self.now, self.rnd = clock, now, rnd or random.Random()
@@ -466,12 +527,18 @@ class Gate:
         u, chat_id = msg["from"], msg["chat"]["id"]
         cmd, _, arg = (msg.get("text") or "").strip().partition(" ")
         cmd = cmd.split("@", 1)[0].lower()
-        source = (arg.strip()[:64] or None) if cmd == "/start" else None
-        self.store.touch(u, self.now(), source)
-        if source and source.startswith("dom_") and self.snap.find_house(source[4:]):   # чат дома, «Целый дом»
+        source, lot_id = parse_start((arg.strip()[:64] or None) if cmd == "/start" else None)
+        self.campaigns.refresh()
+        word = self.campaigns.by_word(cmd + arg) if not cmd.startswith("/") else None
+        new = self.store.touch(u, self.now(), source)
+        tag = source or word
+        if tag:
+            self.store.click(u["id"], self.now(), tag, "start" if source else "word", new)
+            lot_id = lot_id or (self.campaigns.get(tag) or {}).get("lot")
+        if source and source.startswith("dom_") and self.snap.find_house(source[4:]):
             return self.show_house(chat_id, u["id"], self.snap.find_house(source[4:]))
-        if source and source[:4] in ("lot_", "dom_"):   # пост канала
-            return self.show_lot(chat_id, u["id"], source[4:])
+        if lot_id:
+            return self.show_lot(chat_id, u["id"], str(lot_id))
         if source == "game" or cmd == "/game":
             return self.game(chat_id, u["id"])
         if cmd in ("/parking", "/flats"):
@@ -719,6 +786,11 @@ class Gate:
                                  if self.cards and self.cards.on else "выключены (нет Chromium или Pillow)"),
                  "", "<b>Откуда пришли</b> (метка /start):"]
         lines += [f"{escape(src)}: {n} (подписаны {m or 0})" for src, n, m in s["sources"]]
+        camp = self.store.campaign_stats()
+        if camp:
+            lines += ["", "<b>Переходы по меткам</b> (все открытия, и повторные):"]
+            lines += [f"{escape(t)}: {n} переходов, {p} чел., новых {nw}, подписаны {m}, последний {last[:10]}"
+                      for t, n, p, nw, m, first, last in camp]
         return "\n".join(lines)
 
     def _today(self) -> date:

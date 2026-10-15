@@ -423,6 +423,20 @@ def cmd_channel_houses(a, con) -> int:
     return 0
 
 
+def cmd_channel_reel(a, con) -> int:
+    """Кадры ролика для Instagram Reels (1080×1920) по фактам из JSON."""
+    from . import reels
+    facts = reels.load_facts(a.facts)
+    for p in reels.render(facts, a.out):
+        print(p)
+    if facts.get("campaign"):
+        print(f"Ссылка с меткой: {reels.bot_link(facts['campaign'])}")
+        if a.campaigns:
+            reels.register(facts, a.campaigns)
+            print(f"Метка {facts['campaign']} записана в {a.campaigns} — закоммитьте его в ветку data, бот подхватит после git pull")
+    return 0
+
+
 def register(sub) -> None:
     sp = sub.add_parser("channel-draft", help="черновики постов для Telegram-канала (docs/channel.md)")
     sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (track-sync)")
@@ -479,6 +493,13 @@ def register(sub) -> None:
     sp.add_argument("--chat", help="чат кухни (иначе TELEGRAM_DRAFT_CHAT)")
     sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней")
     sp.set_defaults(fn=cmd_channel_market, track=True)
+
+    sp = sub.add_parser("channel-reel", help="кадры ролика для Instagram Reels по фактам лота (docs/channel.md, «Ролики»)")
+    sp.add_argument("--facts", required=True, help="JSON фактов, пример — docs/design/reels/example.facts.json")
+    sp.add_argument("--out", default="channel_out/reel", help="папка для кадров 01-price.png … 05-cta.png")
+    sp.add_argument("--campaigns", help="записать метку ролика в campaigns.json бота "
+                                        "(обычно <data>/channel_state/bot/campaigns.json)")
+    sp.set_defaults(fn=cmd_channel_reel, track=True)
 
     sp = sub.add_parser("market-add", help="дописать рыночные цены из CSV в журнал рынка (docs/channel.md)")
     sp.add_argument("--file", required=True, help="CSV с колонками " + ", ".join(market.FIELDS[:-1]))

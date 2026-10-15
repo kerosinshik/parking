@@ -276,8 +276,8 @@ def cover_html(c: dict) -> str:
   <div class="title">{escape(c.get("title") or "")}</div>{lede}""")
 
 
-def render_html(html: str, out_path, chrome: str | None = None) -> Path:
-    """Скриншот страницы 1080×1080 в PNG."""
+def render_html(html: str, out_path, chrome: str | None = None, size: tuple[int, int] = (1080, 1080)) -> Path:
+    """Скриншот страницы size (по умолчанию 1080×1080) в PNG."""
     chrome = chrome or chrome_path()
     if not chrome:
         raise RuntimeError("нет Chromium для отрисовки карточек (PARKAN_CHROME)")
@@ -289,13 +289,13 @@ def render_html(html: str, out_path, chrome: str | None = None) -> Path:
         page.write_text(html, encoding="utf-8")
         # окно выше карточки: у headless-режима видимая область меньше окна, низ иначе обрезается
         subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
-                        "--force-device-scale-factor=1", "--window-size=1080,1400", "--virtual-time-budget=3000",
+                        "--force-device-scale-factor=1", f"--window-size={size[0]},{size[1] + 320}", "--virtual-time-budget=3000",
                         "--allow-file-access-from-files", f"--user-data-dir={tmp}/profile",
                         f"--screenshot={shot}", page.as_uri()],
                        check=True, capture_output=True, timeout=90)
         if not shot.exists():
             raise RuntimeError("Chromium не сохранил карточку")
-        Image.open(shot).convert("RGB").crop((0, 0, 1080, 1080)).save(out, "PNG", optimize=True)
+        Image.open(shot).convert("RGB").crop((0, 0, *size)).save(out, "PNG", optimize=True)
     return out
 
 
