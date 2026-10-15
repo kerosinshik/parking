@@ -5,13 +5,16 @@
 токенами, шрифтами и картой районов, что у html_cards; PNG рисует тот же headless Chromium.
 Монтаж (длительности, анимация, звук) — вне проекта: кадры кладутся на таймлайн по полю frames[i]["sec"].
 
-Факты ролика — JSON (пример — docs/design/reels/example.facts.json):
+Факты ролика — JSON (пример — docs/design/reels/2026-10-15-mozhayskoe/facts.json):
   type        parking | flat (иллюстрация и слово «машино-место»/«квартира»)
   price       стартовая цена, ₽
   median      медиана старта в районе, ₽ (для квартир — посчитайте по ₽/м² заранее и дайте цену)
   address     адрес объекта
   district    район (как в moscow-geo.json, «Кузьминки», «Мещанский район»)
   area        площадь, м² (необязательно)
+  scope       «района» или «округа» — с чем сравниваем (как в «Лоте дня»; по умолчанию «района»)
+  until       срок заявок для плашки на кадре с адресом, «заявки до 3 ноября» (необязательно)
+  url         ссылка на лот (для текстов, на кадрах не печатается)
   bot         имя канала/бота для поиска в Telegram (по умолчанию «Попутный метр»)
 """
 
@@ -118,6 +121,8 @@ def frame_place(f: dict) -> str:
     if f.get("area"):
         chips.append(f'{f["area"]:g} м²'.replace(".", ","))
     chips.append(money_text(f["price"]))
+    if f.get("until"):
+        chips.append(f["until"])
     chips = "".join(f'<div class="chip">{escape(c)}</div>' for c in chips)
     return _page(f"""{_top("ГДЕ ЭТО")}
   <div style="position:relative">{_map(f.get("district"))}</div>
@@ -138,14 +143,14 @@ def frame_compare(f: dict) -> str:
     full = 912 - 330            # ширина полосы медианы; подпись справа
     return _page(f"""{_top("СРАВНИМ")}
   <div class="bars">
-    <div class="bar"><div class="cap">Медиана района</div>
+    <div class="bar"><div class="cap">Медиана {escape(f.get("scope") or "района")}</div>
       <div class="line"><div class="fill" style="width:{full}px;background:{RULE}"></div>
       <div class="val">{escape(money_text(median))}</div></div></div>
     <div class="bar"><div class="cap">Этот объект</div>
       <div class="line"><div class="fill" style="width:{full * price / median:.0f}px;background:{LIME}"></div>
       <div class="val">{escape(money_text(price))}</div></div></div>
   </div>
-  <div class="diff"><div class="big">−{pct}%</div><div class="note">ниже медианы района</div></div>""", 3)
+  <div class="diff"><div class="big">−{pct}%</div><div class="note">ниже медианы {escape(f.get("scope") or "района")}</div></div>""", 3)
 
 
 def frame_caveat(f: dict) -> str:

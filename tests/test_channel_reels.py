@@ -7,7 +7,8 @@ import pytest
 from parkan.channel import reels
 
 FACTS = {"type": "parking", "price": 1_290_000, "median": 2_300_000,
-         "address": "ул. Примерная, 1", "district": "Кузьминки", "area": 14.1}
+         "address": "ул. Примерная, 1", "district": "Кузьминки", "area": 14.1,
+         "scope": "округа", "until": "заявки до 3 ноября"}
 
 
 def test_money_and_discount():
@@ -23,7 +24,8 @@ def test_frames_follow_script():
     assert [f["name"] for f in fr] == ["01-price", "02-place", "03-compare", "04-caveat", "05-cta"]
     assert "1,29" in fr[0]["html"] and "машино-место" in fr[0]["html"]
     assert "ул. Примерная, 1" in fr[1]["html"] and "ЮВАО" in fr[1]["html"] and "14,1 м²" in fr[1]["html"]
-    assert "−44%" in fr[2]["html"] and "2,3 млн ₽" in fr[2]["html"]
+    assert "заявки до 3 ноября" in fr[1]["html"]
+    assert "−44%" in fr[2]["html"] and "2,3 млн ₽" in fr[2]["html"] and "Медиана округа" in fr[2]["html"]
     assert "стартовая" in fr[3]["html"]
     assert "Попутный метр" in fr[4]["html"]
 
