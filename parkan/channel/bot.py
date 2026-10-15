@@ -358,7 +358,10 @@ class Gate:
 
     def reply(self, chat_id, text: str, kb=None, key: str | None = None, make=None) -> None:
         """Ответ с карточкой, если она уже нарисована; иначе текстом, а карточка — в очередь на отрисовку."""
-        p = self.cards.get(key, make) if self.cards and key else None
+        p = self.cards.ready(key) if self.cards and key else None
+        if p is None and self.cards and key and make:
+            self.cards.want(key, make, urgent=True)
+            p = self.cards.ready(key)  # в синхронном режиме уже готова; в async — нет, отвечаем текстом
         if p is None:
             return self.send(chat_id, text, kb)
         short = len(_visible(text)) <= CAPTION_LIMIT
@@ -484,6 +487,8 @@ class Gate:
 
     def on_callback(self, cq: dict) -> None:
         """callback_data: parking[:ЦАО] · flat[:ЦАО] · lot:<id> · a+/a-:<тип>:<округ> · alerts · g · g:<id>:<n> · menu."""
+        if time.time() - cq.get("message", {}).get("date", time.time()) > 8:
+            return  # протухший callback: Telegram всё равно вернёт ошибку
         self.snap.refresh()
         u, data = cq["from"], cq.get("data") or ""
         chat_id = (cq.get("message") or {}).get("chat", {}).get("id", u["id"])
