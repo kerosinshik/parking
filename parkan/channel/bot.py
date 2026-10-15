@@ -535,8 +535,11 @@ class Gate:
         if tag:
             self.store.click(u["id"], self.now(), tag, "start" if source else "word", new)
             lot_id = lot_id or (self.campaigns.get(tag) or {}).get("lot")
-        if source and source.startswith("dom_") and self.snap.find_house(source[4:]):
-            return self.show_house(chat_id, u["id"], self.snap.find_house(source[4:]))
+        if source and source.startswith("dom_"):
+            h = self.snap.find_house(source[4:])
+            if h:
+                return self.show_house(chat_id, u["id"], h)
+            return self.show_lot(chat_id, u["id"], source[4:])  # дом не найден — ищем лот
         if lot_id:
             return self.show_lot(chat_id, u["id"], str(lot_id))
         if source == "game" or cmd == "/game":
