@@ -38,7 +38,10 @@ def lot(r: dict) -> dict:
                  price=t.money(r["price"]), price_per_m2=_per_m2(r["price"], r.get("space")), area=t.area(r.get("space")),
                  discount=f"{t.pct(r['discount'])} %",
                  compared_with=("цена за м² с медианой цены за м² " if r["kind"] == "flat" else "цена лота с медианой цен ")
-                 + f"{'округа' if r.get('scope') == 'округа' else 'района'} среди лотов того же типа в продаже",
+                 + f"{'округа' if r.get('scope') == 'округа' else 'района'} среди лотов того же типа в продаже: "
+                 "сначала медиана каждого дома, потом медиана по другим домам (свой дом не считается)",
+                 median_houses=f"{r['ref_houses']} {t.plural(r['ref_houses'], ('дом', 'дома', 'домов'))}"
+                 if r.get("ref_houses") else None,
                  median=t._ref_text(r), lots_at_address=r.get("at_addr") if (r.get("at_addr") or 1) > 1 else None,
                  applications_until=t.day(r.get("end_d")), trades_date=t.day(r.get("trades_d")), lot_url=r.get("url"),
                  market=r.get("market"))

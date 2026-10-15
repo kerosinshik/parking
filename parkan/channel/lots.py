@@ -16,7 +16,7 @@ from ..track.store import current_sql, events_source
 
 KINDS = {"parking": "машино-место", "flat": "квартира"}
 BY_TYPE = {v: k for k, v in KINDS.items()}
-MIN_GROUP = 5            # лотов в районе/округе, чтобы медиана что-то значила
+MIN_HOUSES = 3           # других домов в районе/округе, чтобы медиана по домам что-то значила
 
 
 def _j(f: str) -> str:
@@ -44,23 +44,36 @@ def load(con, state_dir, today: date) -> bool:
         FROM ({sql}) JOIN k ON k.t = {_j('ObjectType')}
         WHERE {_j('OnTerritoryOfMoscow')} = 'да'
     """)
+    # Медиана района — по домам: сначала медиана каждого дома, потом медиана этих значений по другим домам района
+    # (свой дом лота не считается). Иначе один дом с десятком одинаковых лотов становится «медианой района»
+    # (15-я Парковая, 48А — 12 из 20 квартир Северного Измайлова, 15.10.2026). Меньше MIN_HOUSES других домов
+    # в районе — сравнение с округом по тому же правилу, иначе сравнения нет.
     con.execute(f"""
         CREATE OR REPLACE TEMP TABLE ch_sale AS
         WITH s AS (
             SELECT *, CASE WHEN kind = 'flat' THEN price / nullif(space, 0) ELSE price END AS base
             FROM ch_lots
             WHERE stage = 'опубликовано' AND (end_d IS NULL OR end_d >= ?) AND price > 0
+        ), h AS (
+            SELECT kind, district, adm, address, median(base) AS hm
+            FROM s WHERE base IS NOT NULL GROUP BY ALL
+        ), d AS (
+            SELECT s.record_id, median(h.hm) AS d_med, count(*) AS d_houses
+            FROM s JOIN h ON h.kind = s.kind AND h.district = s.district AND h.address <> s.address
+            GROUP BY s.record_id
+        ), o AS (
+            SELECT s.record_id, median(h.hm) AS o_med, count(*) AS o_houses
+            FROM s JOIN h ON h.kind = s.kind AND h.adm = s.adm AND h.address <> s.address
+            GROUP BY s.record_id
         ), m AS (
-            SELECT *, median(base) OVER (PARTITION BY kind, district) AS d_med,
-                      count(*) OVER (PARTITION BY kind, district) AS d_n,
-                      median(base) OVER (PARTITION BY kind, adm) AS o_med,
-                      count(*) OVER (PARTITION BY kind, adm) AS o_n,
-                      count(*) OVER (PARTITION BY kind, address) AS at_addr
-            FROM s
+            SELECT s.*, d.d_med, coalesce(d.d_houses, 0) AS d_houses, o.o_med, coalesce(o.o_houses, 0) AS o_houses,
+                   count(*) OVER (PARTITION BY s.kind, s.address) AS at_addr
+            FROM s LEFT JOIN d USING (record_id) LEFT JOIN o USING (record_id)
         )
-        SELECT *, CASE WHEN d_n >= {MIN_GROUP} THEN d_med WHEN o_n >= {MIN_GROUP} THEN o_med END AS ref,
-               CASE WHEN d_n >= {MIN_GROUP} THEN 'района' WHEN o_n >= {MIN_GROUP} THEN 'округа' END AS scope,
-               1 - base / CASE WHEN d_n >= {MIN_GROUP} THEN d_med WHEN o_n >= {MIN_GROUP} THEN o_med END AS discount
+        SELECT *, CASE WHEN d_houses >= {MIN_HOUSES} THEN d_med WHEN o_houses >= {MIN_HOUSES} THEN o_med END AS ref,
+               CASE WHEN d_houses >= {MIN_HOUSES} THEN 'района' WHEN o_houses >= {MIN_HOUSES} THEN 'округа' END AS scope,
+               CASE WHEN d_houses >= {MIN_HOUSES} THEN d_houses WHEN o_houses >= {MIN_HOUSES} THEN o_houses END AS ref_houses,
+               1 - base / CASE WHEN d_houses >= {MIN_HOUSES} THEN d_med WHEN o_houses >= {MIN_HOUSES} THEN o_med END AS discount
         FROM m
     """, [today])
     return True

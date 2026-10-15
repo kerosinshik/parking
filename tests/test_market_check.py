@@ -89,7 +89,7 @@ def test_send_remembers_and_channel_market_builds_draft(tmp_path, monkeypatch):
     assert "нужна цена и площадь".encode() in t.calls[1][1]
     mday = tmp_path / "mk" / "2026-10-13"
     manifest = json.loads((mday / "drafts.json").read_text(encoding="utf-8"))
-    assert [m["key"] for m in manifest] == ["market:torgi:x:90"]
+    assert [m["key"] for m in manifest] == ["market:torgi:x:90"] and manifest[0]["same"].startswith("market-same:")
     facts = json.loads((mday / "01-market.facts.json").read_text(encoding="utf-8"))
     assert facts["rubric"] == "market" and facts["facts"]["listings_count"] == "2 объявления"
     assert json.loads((state / "updates.json").read_text())["offset"] == 8
@@ -146,3 +146,22 @@ def test_split_buttons_moves_keyboard_to_reply(tmp_path, monkeypatch):
     assert kitchen["55"]["split"] and kitchen["56"]["key"] == "lot:x" and not kitchen["44"].get("split")
     t = _send(tmp_path, monkeypatch, [])
     assert main(args) == 0 and t.calls == []                     # повторный запуск ничего не трогает
+
+
+def test_market_same_lot_same_listings_once(tmp_path, monkeypatch):
+    from parkan.cli import main
+    from parkan.channel import market_check
+    state = tmp_path / "ch"
+    market_check.remember(state, 77, "lot:x", "lot", LOT, date(2026, 10, 15))
+    market_check.remember(state, 80, "torgi:x", "torgi", LOT, date(2026, 10, 15))   # тот же лот другим черновиком
+    text = "https://cian.ru/1 24,5 млн 70\nhttps://avito.ru/3 22,4 млн 70"
+    updates = {"ok": True, "result": [
+        {"update_id": 5, "channel_post": {"message_id": 90, "chat": {"id": -100500},
+                                          "reply_to_message": {"message_id": 77}, "text": text}},
+        {"update_id": 6, "channel_post": {"message_id": 91, "chat": {"id": -100500},
+                                          "reply_to_message": {"message_id": 80}, "text": text}}]}
+    _send(tmp_path, monkeypatch, [(200, json.dumps(updates).encode())])
+    assert main(["channel-market", "--out", str(tmp_path / "mk"), "--channel-state", str(state),
+                 "--today", "2026-10-15"]) == 0
+    manifest = json.loads((tmp_path / "mk" / "2026-10-15" / "drafts.json").read_text(encoding="utf-8"))
+    assert [m["key"] for m in manifest] == ["market:lot:x:90"]

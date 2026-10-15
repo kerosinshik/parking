@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -124,6 +125,8 @@ def send_dir(day: Path, registry_path: Path, chat: str | None, today: date) -> i
                 market_check.remember(registry_path.parent, mid, m["key"], m["rubric"], lot, today)
         m["sent"] = True
         sent.append(m["key"])
+        if m.get("same"):   # «Рядом на рынке»: тот же лот с теми же объявлениями больше не придёт
+            sent.append(m["same"])
         how.append(source)
         last = endings.ending(copy.visible(text.rsplit("\n\n<a href", 1)[0])) if source == "написан" else None
         if last:
@@ -279,7 +282,12 @@ def cmd_channel_market(a, con) -> int:
     made = 0
     for f in found:
         key = f"market:{f['entry']['key']}:{f['reply_id']}"
-        if key in registry or any(m["key"] == key for m in manifest):
+        # тот же лот с теми же объявлениями (автор ответил на два черновика одного адреса) — один пост
+        same = "market-same:" + hashlib.sha1(json.dumps(
+            [f["entry"]["lot"].get("address"), sorted(i["url"] for i in f["items"])], ensure_ascii=False
+        ).encode()).hexdigest()[:12]
+        if key in registry or same in registry or any(m["key"] in (key, same) or m.get("same") == same
+                                                         for m in manifest):
             continue
         lot, items = f["entry"]["lot"], f["items"]
         c = market_check.compare(lot, items)
@@ -294,7 +302,7 @@ def cmd_channel_market(a, con) -> int:
             except Exception as e:
                 print(f"  {key}: карточка не нарисовалась: {e}", file=sys.stderr)
         manifest.append({"key": key, "rubric": "market", "facts": f"{stem}.facts.json", "template": f"{stem}.html",
-                         "copy": f"{stem}.txt", "card": card.name if card else None, "sent": False})
+                         "copy": f"{stem}.txt", "card": card.name if card else None, "sent": False, "same": same})
         made += 1
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
     endings.write_list(out / "endings.txt", endings.load(Path(a.channel_state) / "endings.json"))

@@ -35,7 +35,8 @@ POLICY = {
     "sold_min_ratio": 1.2,      # «Продано дороже»: минимум на 20 % выше старта
     "sold_per_day": 2,
     "nofight_per_day": 1,
-    "lot_fallback_days_left": 3,   # «Лот дня» из лотов в продаже: до конца заявок хотя бы 3 дня
+    "lot_fallback_days_left": 3,
+    "address_repeat_days": 30,  # адрес из «Старт ниже итогов», «Лота дня», «Целого дома» не повторяется 30 дней   # «Лот дня» из лотов в продаже: до конца заявок хотя бы 3 дня
     "week_min_discount": 0.15,  # «Две недели вперёд» и «Заявки заканчиваются»
     "week_lots": 7,
     "week_min_lots": 3,         # меньше трёх лотов — подборку не делаем
@@ -70,6 +71,7 @@ class Post:
     card_path: object = None    # готовая карточка (заполняет channel-draft)
     facts: dict | None = None   # факты для автора текста (facts.py, навык channel-copy)
     market_lot: dict | None = None   # лот в продаже со стартом ниже медианы: кнопки «проверить рынок» (market_check)
+    address: str | None = None  # адрес лота в продаже: за день — один пост на адрес среди torgi, lot, drop, house
 
 
 def _mix(items: list, n: int) -> list:
@@ -91,19 +93,22 @@ def lot_posts(con, state_dir, today, policy=POLICY, obs=(), sold=None, rows=None
         rows = lots.new_deals(con, state_dir, today, policy["lot_min_discount"])
     market.enrich(rows, obs, today, policy["market_max_age_days"], sold=sold)
     return [Post(f"lot:{r['kind']}:{r['address']}:{r['end_d']}", "lot", templates.lot(r), templates.lot_card(r),
-                 score=r["discount"], facts=facts.lot(r), market_lot=market_check.lot_for_market(r)) for r in rows]
+                 score=r["discount"], facts=facts.lot(r), market_lot=market_check.lot_for_market(r),
+                 address=r["address"]) for r in rows]
 
 
 def drop_posts(con, state_dir, today, policy=POLICY, obs=(), sold=None) -> list[Post]:
     rows = lots.price_drops(con, state_dir, today, policy["drop_min"])
     market.enrich(rows, obs, today, policy["market_max_age_days"], sold=sold)
     return [Post(f"drop:{r['record_id']}:{r['price']:.0f}", "drop", templates.drop(r), templates.drop_card(r),
-                 score=r["drop"], facts=facts.drop(r), market_lot=market_check.lot_for_market(r)) for r in rows]
+                 score=r["drop"], facts=facts.drop(r), market_lot=market_check.lot_for_market(r),
+                 address=r["address"]) for r in rows]
 
 
 def house_posts(con, state_dir, today, policy=POLICY) -> list[Post]:
     return [Post(f"house:{r['kind']}:{r['address']}:{r['end_d']}", "house", templates.house(r), templates.house_card(r),
-                 score=r["n"], facts=facts.house(r)) for r in lots.new_houses(con, state_dir, today, policy["house_min_lots"])]
+                 score=r["n"], facts=facts.house(r), address=r["address"])
+            for r in lots.new_houses(con, state_dir, today, policy["house_min_lots"])]
 
 
 def torgi_posts(con, today: date, sold: list[dict], policy=POLICY) -> list[Post]:
@@ -129,7 +134,8 @@ def torgi_posts(con, today: date, sold: list[dict], policy=POLICY) -> list[Post]
     for gap, r, ref in sorted(best.values(), key=lambda x: -x[0]):
         market.enrich([r], [], today, policy["market_max_age_days"], sold=sold)
         out.append(Post(f"torgi:{r['address']}", "torgi", templates.torgi(r, ref), templates.torgi_card(r, ref),
-                        score=gap, facts=facts.torgi(r), market_lot=market_check.lot_for_market(r, below=True)))
+                        score=gap, facts=facts.torgi(r), market_lot=market_check.lot_for_market(r, below=True),
+                        address=r["address"]))
     return out
 
 
@@ -262,8 +268,21 @@ def drafts(con, state_dir, today: date, *, results_path=None, rubrics=None, regi
         out += fresh(weekstats_posts(results, today, policy))
     if have_lots and "snapshot" in rubrics:
         out += fresh(snapshot_posts(con, results, today, policy))
+    # один адрес — один пост в день: квартира, которая проходит и в «Старт ниже итогов», и в «Лот дня», идёт в первую
+    # (ориентир по реальным сделкам), а «Лот дня» берёт следующий лот (решение 15.10.2026)
+    used = recent_addresses(registry, today, policy["address_repeat_days"])
+
+    def free(posts: list[Post]) -> list[Post]:
+        return [p for p in posts if not p.address or p.address not in used]
+
+    def take(posts: list[Post]) -> list[Post]:
+        used.update(p.address for p in posts if p.address)
+        return posts
+
+    if have_lots and "torgi" in rubrics:
+        out += take(free(fresh(torgi_posts(con, today, sold, policy)))[:policy["torgi_per_day"]])
     if have_lots and "lot" in rubrics:
-        posts = _mix_posts(fresh(lot_posts(con, state_dir, today, policy, obs, sold)), policy["lots_per_day"])
+        posts = _mix_posts(free(fresh(lot_posts(con, state_dir, today, policy, obs, sold))), policy["lots_per_day"])
         # новых выгодных мало — добираем до дневной нормы лучшими из тех, что уже в продаже; уже ушедшие сегодня
         # «лоты дня» считаются, чтобы повторный запуск в тот же день не добавлял новые
         sent_today = sum(1 for k, d in registry.items() if k.startswith("lot:") and str(d)[:10] == today.isoformat())
@@ -271,22 +290,35 @@ def drafts(con, state_dir, today: date, *, results_path=None, rubrics=None, regi
         if room > 0:
             spare = lots.best_deals(con, today, policy["lot_min_discount"], policy["lot_fallback_days_left"])
             taken = {p.key for p in posts}
-            spare = [p for p in fresh(lot_posts(con, state_dir, today, policy, obs, sold, rows=spare))
+            spare = [p for p in free(fresh(lot_posts(con, state_dir, today, policy, obs, sold, rows=spare)))
                      if p.key not in taken]
             posts += _mix_posts(spare, room)
-        out += posts
+        out += take(posts)
     if have_lots and "deadline" in rubrics:
         out += fresh(deadline_posts(con, today, policy))
     if have_lots and "house" in rubrics:
-        out += fresh(house_posts(con, state_dir, today, policy))[:policy["houses_per_day"]]
+        out += take(free(fresh(house_posts(con, state_dir, today, policy)))[:policy["houses_per_day"]])
     if have_lots and "drop" in rubrics:
-        out += _mix_posts(fresh(drop_posts(con, state_dir, today, policy, obs, sold)), policy["drops_per_day"])
+        out += take(_mix_posts(free(fresh(drop_posts(con, state_dir, today, policy, obs, sold))), policy["drops_per_day"]))
     if "sold" in rubrics:
         out += _mix_posts(fresh(sold_posts(results, today, policy)), policy["sold_per_day"])
-    if have_lots and "torgi" in rubrics:
-        out += fresh(torgi_posts(con, today, sold, policy))[:policy["torgi_per_day"]]
     if "nofight" in rubrics:
         out += _mix_posts(fresh(nofight_posts(results, today, policy)), policy["nofight_per_day"])
+    return out
+
+
+def recent_addresses(registry: dict, today: date, days: int) -> set[str]:
+    """Адреса лотов в продаже из постов за последние days дней (torgi, lot, house): в эти рубрики снова не идут."""
+    since = (today - timedelta(days=days)).isoformat()
+    out = set()
+    for key, d in registry.items():
+        if str(d)[:10] < since:
+            continue
+        rubric, _, rest = key.partition(":")
+        if rubric == "torgi":
+            out.add(rest)
+        elif rubric in ("lot", "house") and rest.count(":") >= 2:
+            out.add(rest.split(":", 1)[1].rsplit(":", 1)[0])    # kind:адрес:конец заявок
     return out
 
 

@@ -190,6 +190,22 @@ def test_lot_of_the_day_falls_back_to_lots_on_sale(con, tmp_path):
     assert content.drafts(con, tmp_path, day, rubrics=("lot",), registry=today_sent) == []
 
 
+def test_one_post_per_address(con, tmp_path):
+    journal(con, tmp_path)
+    day = date(2026, 10, 6)
+    first = content.drafts(con, tmp_path, day, rubrics=("lot", "house"))
+    houses = [p.address for p in first if p.rubric == "house"]
+    assert houses and not any(p.rubric == "lot" and p.address in houses for p in first)
+    # адрес, ушедший недавно «Лотом дня», не повторяется — ни запасом, ни в другой рубрике
+    registry = {p.key: "2026-10-01" for p in first if p.rubric == "lot"}
+    again = content.drafts(con, tmp_path, day, rubrics=("lot", "house"), registry=registry)
+    sent = {p.address for p in first if p.rubric == "lot"}
+    assert not any(p.address in sent for p in again)
+    assert content.recent_addresses({"torgi:ул. А, 1": "2026-10-05", "lot:flat:ул. Б, 2:2026-10-30": "2026-10-05",
+                                     "lot:flat:ул. В, 3:2026-10-30": "2026-08-01", "result:9": "2026-10-05"},
+                                    day, 30) == {"ул. А, 1", "ул. Б, 2"}
+
+
 def test_text_is_html_escaped():
     r = {"kind": "parking", "place": "ул. <Тест> & Ко", "district": "район А", "price": 1e6, "ref": 2e6,
          "scope": "района", "discount": 0.5, "space": 10, "at_addr": 1, "end_d": date(2026, 11, 1),
