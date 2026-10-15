@@ -35,3 +35,14 @@ def test_load_facts_requires_numbers(tmp_path):
     p.write_text(json.dumps({"price": 1}), encoding="utf-8")
     with pytest.raises(ValueError, match="median"):
         reels.load_facts(p)
+
+
+def test_campaign_word_and_register(tmp_path):
+    fr = reels.frames({**FACTS, "word": "можайка"})
+    assert "МОЖАЙКА" in fr[4]["html"]
+    p = tmp_path / "campaigns.json"
+    reels.register({**FACTS, "campaign": "igr01", "lot_id": "42", "word": "можайка"}, p)
+    assert json.loads(p.read_text(encoding="utf-8"))["igr01"] == {"lot": "42", "word": "можайка", "title": "ул. Примерная, 1"}
+    with pytest.raises(ValueError, match="занято"):
+        reels.register({**FACTS, "campaign": "igr02", "word": "Можайка"}, p)
+    assert reels.bot_link("igr01").endswith("?start=igr01")

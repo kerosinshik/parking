@@ -272,3 +272,25 @@ def test_cards_off_and_prewarm(tmp_path):
     n = len(drawn)
     g.tick()                                      # тот же снимок — заново не рисуем
     assert len(drawn) == n
+
+
+def test_campaign_link_and_word(tmp_path):
+    rec = Recorder(members={7, 8, 9})
+    g, store = make(tmp_path, rec, [L(42), L(43)])
+    (tmp_path / "campaigns.json").write_text(json.dumps(
+        {"igr01": {"lot": "42", "word": "Можайка"}, "igbio": {}}, ensure_ascii=False), encoding="utf-8")
+    g.handle(msg("/start igr01"))                    # метка ролика открывает его лот
+    assert "tender/42" in rec.last()[0]
+    g.handle(msg("/start igr01"))                    # повторный переход тоже в журнале
+    g.handle(msg("/start", uid=8))                   # нашёл бота поиском…
+    g.handle(msg("можайка!", uid=8))                 # …и прислал кодовое слово
+    assert "tender/42" in rec.last()[0]
+    g.handle(msg("/start x-lot_43", uid=9))          # метка и лот в одной ссылке
+    assert "tender/43" in rec.last()[0]
+    g.handle(msg("/start igbio", uid=10))            # метка без лота — обычное приветствие
+    assert store.q("SELECT id, source FROM users ORDER BY id") == [(7, "igr01"), (8, "igr01"), (9, "x-lot_43"), (10, "igbio")]
+    st = {r[0]: r[1:5] for r in store.campaign_stats()}
+    assert st["igr01"] == (3, 2, 2, 2)               # переходов, людей, новых (8-й — со словом), подписаны
+    assert st["igbio"] == (1, 1, 1, 0)
+    assert "Переходы по меткам" in g.stats_text()
+    assert bot.parse_start("lot_42") == ("lot_42", "42") and bot.parse_start("vc") == ("vc", None)

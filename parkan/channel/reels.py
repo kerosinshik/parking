@@ -15,12 +15,17 @@
   scope       «района» или «округа» — с чем сравниваем (как в «Лоте дня»; по умолчанию «района»)
   until       срок заявок для плашки на кадре с адресом, «заявки до 3 ноября» (необязательно)
   url         ссылка на лот (для текстов, на кадрах не печатается)
+  lot_id      id лота в снимке бота — его откроют метка и кодовое слово
+  campaign    метка ролика для аналитики: ig01 → t.me/<бот>?start=ig01 (буквы, цифры, _ и -, до 64 знаков)
+  word        кодовое слово для тех, кто найдёт бота поиском: печатается на последнем кадре
   bot         имя канала/бота для поиска в Telegram (по умолчанию «Попутный метр»)
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
 from html import escape
 from pathlib import Path
 
@@ -31,6 +36,7 @@ RW, RH = 1080, 1920
 # безопасная зона Reels: сверху ник и звук, снизу подпись и кнопки — важное держим между ними
 SAFE_TOP, SAFE_BOTTOM = 220, 420
 
+DEFAULT_BOT = os.environ.get("PARKAN_BOT_USERNAME", "poputny_metr_bot")
 KIND = {"parking": "машино-место", "flat": "квартира"}
 
 CSS = f"""
@@ -69,12 +75,13 @@ CSS = f"""
 .check{{display:flex;gap:28px;align-items:center;font:600 46px/1.2 Onest;color:{SUB}}}
 .check b{{flex:none;width:64px;height:64px;border-radius:50%;border:3px solid {LIME};color:{LIME};
   display:flex;align-items:center;justify-content:center;font:700 34px Unbounded}}
-.cta-illus{{display:block;width:620px;height:620px;object-fit:contain;margin:30px auto auto}}
+.cta-illus{{display:block;width:460px;height:460px;object-fit:contain;margin:10px auto auto}}
 .search{{background:{LIGHT};border-radius:70px;padding:34px 44px;display:flex;align-items:center;gap:30px}}
 .search svg{{flex:none}}
 .search span{{font:700 58px Onest;color:{BG}}}
 .search i{{display:inline-block;width:5px;height:62px;background:{BG};margin-left:6px;vertical-align:-10px}}
 .hint{{font:500 40px/1.3 Onest;color:{MUTED};margin-top:30px;text-align:center}}
+.hint .word{{display:block;margin-top:10px;font:800 64px Unbounded;color:{LIME};letter-spacing:.02em}}
 """
 
 
@@ -169,11 +176,12 @@ SEARCH_ICON = (f'<svg width="64" height="64" viewBox="0 0 24 24" fill="none" str
 def frame_cta(f: dict) -> str:
     bot = f.get("bot") or "Попутный метр"
     img, scale = ILLUSTRATIONS.get(f.get("type") or "parking", ILLUSTRATIONS["parking"])
+    word = (f'<br>и отправь боту слово<b class="word">{escape(f["word"].upper())}</b>') if f.get("word") else ""
     return _page(f"""{_top("В TELEGRAM")}
   <div class="title">Весь объект и ссылка на торги — <em>в боте</em></div>
   <img class="cta-illus" src="{(ASSETS / img).as_uri()}" style="transform:scale({scale * 0.8})">
   <div class="search">{SEARCH_ICON}<span>{escape(bot)}<i></i></span></div>
-  <div class="hint">Ищи «{escape(bot)}» в Telegram</div>""", 5)
+  <div class="hint">Ищи «{escape(bot)}» в Telegram{word}</div>""", 5)
 
 
 # сценарий: (имя файла, секунды на таймлайне, кадр)
@@ -197,4 +205,26 @@ def load_facts(path) -> dict:
     missing = [k for k in ("price", "median", "address") if not f.get(k)]
     if missing:
         raise ValueError("в фактах ролика нет: " + ", ".join(missing))
+    if f.get("campaign") and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", f["campaign"]):
+        raise ValueError("метка ролика — латиница, цифры, _ и -, до 64 знаков (так требует Telegram)")
     return f
+
+
+def bot_link(campaign: str, bot_username: str = DEFAULT_BOT) -> str:
+    return f"https://t.me/{bot_username}?start={campaign}"
+
+
+def register(facts: dict, path) -> dict:
+    """Записать метку ролика в campaigns.json бота (рядом со снимком lots.json): метка → лот и кодовое слово."""
+    p = Path(path)
+    items = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    word = facts.get("word")
+    clash = [t for t, c in items.items() if t != facts["campaign"] and word and (c.get("word") or "").lower() == word.lower()]
+    if clash:
+        raise ValueError(f"кодовое слово «{word}» уже занято меткой {clash[0]}")
+    items[facts["campaign"]] = {k: v for k, v in (("lot", facts.get("lot_id")), ("word", word),
+                                                   ("title", facts.get("title") or facts.get("address")),
+                                                   ("date", facts.get("date"))) if v}
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(items, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return items[facts["campaign"]]
