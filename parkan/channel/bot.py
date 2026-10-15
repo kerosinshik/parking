@@ -559,11 +559,11 @@ class Gate:
         """callback_data: parking[:ЦАО] · flat[:ЦАО] · lot:<id> · a+/a-:<тип>:<округ> · alerts · g · g:<id>:<n> · menu."""
         if time.time() - cq.get("message", {}).get("date", time.time()) > 8:
             return  # протухший callback: Telegram всё равно вернёт ошибку
+        self.bot.call("answerCallbackQuery", {"callback_query_id": cq["id"]})
         self.snap.refresh()
         u, data = cq["from"], cq.get("data") or ""
         chat_id = (cq.get("message") or {}).get("chat", {}).get("id", u["id"])
         self.store.touch(u, self.now())
-        self.bot.call("answerCallbackQuery", {"callback_query_id": cq["id"]})
         head, *rest = data.split(":")
         if head in lots.KINDS:
             self.show(chat_id, u["id"], head, rest[0] if rest else "")
