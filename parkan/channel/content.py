@@ -12,7 +12,8 @@
 - deadline — «Заявки заканчиваются» (каждый день): выгодные лоты, приём заявок по которым закрывается через 3 дня;
 - snapshot — «Срез торгов» (вторник и четверг): лоты в продаже, медианы, округа, итоги за 30 дней;
 - weekstats — «Итоги недели» (пятница): продано, доля по старту, рекорд;
-- torgi    — «Старт ниже итогов»: квартира в продаже, старт за м² заметно ниже итогов торгов в её доме или районе.
+- torgi    — «Старт ниже итогов»: квартира в продаже, старт за м² заметно ниже итогов торгов в её доме или районе;
+- analytics — «Аналитика» (1-го числа): как продаются машино-места и квартиры — по старту или с торгом, за 90 дней.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from ..track import digest
+from ..track import digest, torgi
 from . import facts, lots, market, market_check, templates
 
 # Редакционная политика канала. Отдельно от порогов сводки Trello: их можно менять независимо.
@@ -56,8 +57,11 @@ POLICY = {
     "torgi_levels": ("дом", "район"),   # ориентир по округу слишком грубый для отдельного поста
     "torgi_min_days_left": 2,   # до конца приёма заявок — хотя бы 2 дня, чтобы читатель успел
     "torgi_per_day": 2,         # сравнение с домом и (или) с районом — единичные «золотые» случаи не теряются
+    "analytics_monthday": 1,    # «Аналитика»: 1-го числа
+    "analytics_days": 90,       # окно — торги за 90 дней: месяц машино-мест — это 50–200 домов, мало для долей
+    "analytics_min": 50,        # продаж с известной ценой по каждому типу, иначе доли не показываем
 }
-RUBRICS = ("lot", "drop", "house", "sold", "nofight", "week", "weekstats", "torgi", "deadline", "snapshot")
+RUBRICS = ("lot", "drop", "house", "sold", "nofight", "week", "weekstats", "torgi", "deadline", "snapshot", "analytics")
 
 
 @dataclass
@@ -236,6 +240,67 @@ def weekstats_posts(results: list[dict], today: date, policy=POLICY) -> list[Pos
     return out
 
 
+SOLD_SPLIT = ("at_start", "up_to_20", "over_20")   # порядок клеток на карточке
+
+
+def outcomes(results: list[dict], kind: str, since: date, until: date) -> dict:
+    """Чем закончились аукционы типа kind с датой торгов в [since, until].
+
+    Проданные делятся на at_start — по стартовой цене (в том числе единственному участнику), up_to_20 — торговались,
+    рост меньше 20 %, over_20 — рост 20 % и больше; cells — те же доли в клетках из 100. Продано, но итоговая цена
+    не опубликована (или неправдоподобна) — unknown: в доли проданных не входит, но аукцион состоялся.
+    not_held — не состоялись (заявок не было), их доля — от всех проведённых (held). Отменённые городом —
+    cancelled, до аукциона они не дошли. Публичное предложение (цена снижается) не считается."""
+    st = dict.fromkeys(SOLD_SPLIT + ("not_held", "cancelled", "unknown"), 0)
+    growth = []
+    for r in results:
+        d = lots.trades_date(r)
+        if r["kind"] != kind or not d or not since <= d <= until or "предложение" in (r.get("procedure_form") or "").lower():
+            continue
+        status, ratio = r.get("status"), r.get("final_to_start")
+        if status == "Отменены":
+            st["cancelled"] += 1
+        elif status == "Признаны несостоявшимися":
+            st["not_held"] += 1
+        elif status in torgi.SOLD:
+            if status == "Единственный участник" or (ratio is not None and ratio <= 1.005):
+                st["at_start"] += 1
+            elif ratio is None or ratio > 20:     # ×20 и выше — ошибка в итоговой цене на сайте
+                st["unknown"] += 1
+                continue
+            else:
+                st["up_to_20" if ratio < 1.2 else "over_20"] += 1
+            growth.append(ratio or 1.0)
+    st["sold"] = sum(st[k] for k in SOLD_SPLIT)
+    st["held"] = st["sold"] + st["unknown"] + st["not_held"]
+    growth.sort()
+    st["growth"] = growth[len(growth) // 2] if growth else None
+    st["cells"] = _cells([st[k] for k in SOLD_SPLIT]) if st["sold"] else [0] * len(SOLD_SPLIT)
+    return st
+
+
+def _cells(counts: list[int], total: int = 100) -> list[int]:
+    """Доли в клетках из 100 методом наибольшего остатка: сумма всегда ровно 100."""
+    n = sum(counts)
+    raw = [c * total / n for c in counts]
+    cells = [int(x) for x in raw]
+    for i in sorted(range(len(raw)), key=lambda i: raw[i] - cells[i], reverse=True)[:total - sum(cells)]:
+        cells[i] += 1
+    return cells
+
+
+def analytics_posts(results: list[dict], today: date, policy=POLICY) -> list[Post]:
+    """«Аналитика»: как продаются машино-места и квартиры за analytics_days дней — две сетки по 100 проданных."""
+    until = today - timedelta(days=1)
+    since = today - timedelta(days=policy["analytics_days"])
+    st = {kind: outcomes(results, kind, since, until) for kind in lots.KINDS}
+    if any(s["sold"] < policy["analytics_min"] for s in st.values()):
+        return []
+    period = {"since": since, "until": until, "days": policy["analytics_days"]}
+    return [Post(f"analytics:outcomes:{today:%Y-%m}", "analytics", templates.analytics(st, period),
+                 templates.analytics_card(st, period), score=1, facts=facts.analytics(st, period))]
+
+
 def default_rubrics(today: date, policy=POLICY) -> tuple[str, ...]:
     r = ["lot", "drop", "house", "sold", "nofight", "torgi", "deadline"]
     if today.weekday() in policy["snapshot_weekdays"]:
@@ -244,6 +309,8 @@ def default_rubrics(today: date, policy=POLICY) -> tuple[str, ...]:
         r.append("week")
     if today.weekday() == policy["weekstats_weekday"]:
         r.append("weekstats")
+    if today.day == policy["analytics_monthday"]:
+        r.append("analytics")
     return tuple(r)
 
 
@@ -268,6 +335,8 @@ def drafts(con, state_dir, today: date, *, results_path=None, rubrics=None, regi
         out += fresh(weekstats_posts(results, today, policy))
     if have_lots and "snapshot" in rubrics:
         out += fresh(snapshot_posts(con, results, today, policy))
+    if "analytics" in rubrics:
+        out += fresh(analytics_posts(results, today, policy))
     # один адрес — один пост в день: квартира, которая проходит и в «Старт ниже итогов», и в «Лот дня», идёт в первую
     # (ориентир по реальным сделкам), а «Лот дня» берёт следующий лот (решение 15.10.2026)
     used = recent_addresses(registry, today, policy["address_repeat_days"])

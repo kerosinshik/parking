@@ -13,10 +13,11 @@ from . import templates as t
 TITLES = {"lot": "Лот дня", "drop": "Снижение цены", "house": "Целый дом", "sold": "Продано дороже",
           "nofight": "Без борьбы", "week": "Две недели вперёд", "weekstats": "Итоги недели",
           "deadline": "Заявки заканчиваются", "snapshot": "Срез торгов",
-          "torgi": "Старт ниже итогов", "market": "Рядом на рынке"}
+          "torgi": "Старт ниже итогов", "market": "Рядом на рынке", "analytics": "Аналитика"}
 TAGS = {"lot": "#лотдня", "drop": "#снижение", "house": "#целыйдом", "sold": "#итоги", "nofight": "#безборьбы",
         "week": "#двенеделивперёд", "weekstats": "#итогинедели",
-        "deadline": "#заявкизаканчиваются", "snapshot": "#срезторгов", "torgi": "#стартнижеитогов", "market": "#рядомнарынке"}
+        "deadline": "#заявкизаканчиваются", "snapshot": "#срезторгов", "torgi": "#стартнижеитогов", "market": "#рядомнарынке",
+        "analytics": "#аналитика"}
 
 
 def _clean(d: dict) -> dict:
@@ -147,3 +148,27 @@ def weekstats(kind: str, st: dict) -> dict:
                  record=_clean({"growth": f"×{t.num(rec['final_to_start'])}", "address": rec["place"],
                                 "district": t.district(rec.get("district")), "start_price": t.money(rec["start_price"]),
                                 "final_price": t.money(rec["final_price"]), "lot_url": rec.get("url")}) if rec else None)
+
+
+def analytics(st: dict, p: dict) -> dict:
+    def one(s: dict) -> dict:
+        return _clean({"sold_with_known_price": str(s["sold"]),
+                       "sold_at_start_share": f"{s['cells'][0]} %",
+                       "sold_up_to_20_share": f"{s['cells'][1]} %",
+                       "sold_over_20_share": f"{s['cells'][2]} %",
+                       "median_growth": f"×{t.num(s['growth'], 2)}" if s.get("growth") else None,
+                       "auctions_held": str(s["held"]),
+                       "not_held": str(s["not_held"]),
+                       "not_held_share": f"{t.pct(s['not_held'] / s['held'])} %" if s["held"] else None,
+                       "cancelled_by_city": str(s["cancelled"])})
+    out = _base("analytics", "parking", period=t.period_text(p), days=str(p["days"]),
+                parking=one(st["parking"]), flats=one(st["flat"]),
+                shares_explained="sold_*_share — доли от проданных лотов с опубликованной итоговой ценой (в сумме 100 %): "
+                                 "по стартовой цене (в том числе единственному участнику — конкуренции не было), "
+                                 "дороже старта меньше чем на 20 %, дороже на 20 % и больше. median_growth — медиана "
+                                 "отношения итоговой цены к стартовой среди проданных. not_held_share — доля несостоявшихся "
+                                 "(заявок не было, лот не продан) от всех проведённых аукционов. cancelled_by_city — город "
+                                 "снял лот до аукциона, в доли не входит.",
+                source="итоги аукционов на torgi.mos.ru, собранные каналом")
+    out["object"] = "машино-места и квартиры"
+    return out

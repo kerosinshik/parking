@@ -414,3 +414,31 @@ def weekstats_card(kind: str, st: dict) -> dict:
                  headline_sub=f"{plural(st['sold'], w['forms'])} {_sold_verb(kind, st['sold'])} на торгах",
                  deadline=st["period"], districts=st["districts"], stats=stats,
                  foot=f"без покупателя — {st['failed']} · отменены городом — {st['cancelled']}")
+
+
+# ---------------------------------------------------------------- 8. Аналитика
+
+def period_text(p: dict) -> str:
+    since, until = p["since"], p["until"]
+    return (f"{since.day}–{day(until)}" if since.month == until.month
+            else f"{day(since)} – {day(until)}")
+
+
+def analytics(st: dict, p: dict) -> str:
+    lines = [f"📊 <b>Как продаются лоты: {period_text(p)}</b>", ""]
+    for kind, s in st.items():
+        w = WORDS[kind]
+        lines.append(f"{w['icon']} {w['forms'][1].capitalize()}: продано {s['sold']} с известной ценой, "
+                     f"по стартовой — {s['cells'][0]} %, дороже старта на 20 % и больше — {s['cells'][2]} %, "
+                     f"не состоялись — {pct(s['not_held'] / s['held'])} % аукционов")
+    return _post(lines, ["#аналитика"])
+
+
+def analytics_card(st: dict, p: dict) -> dict:
+    cols = []
+    for kind, s in st.items():
+        cols.append({"label": {"parking": "Машино-места", "flat": "Квартиры"}[kind], "cells": s["cells"], "big": f"{s['cells'][0]}%", "cap": "по старту",
+                     "foot": f"не состоялись {pct(s['not_held'] / s['held'])}% аукционов"})
+    return _card("split", "АНАЛИТИКА", title="Торгуются ли за лот",
+                 sub=f"из каждых 100 проданных · {period_text(p)}", columns=cols,
+                 legend=["по стартовой цене", "дороже до 20%", "дороже на 20%+"])

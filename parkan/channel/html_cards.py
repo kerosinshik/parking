@@ -30,6 +30,8 @@ MAX_SPAN = 0.36 * K / W          # самый широкий кадр для о�
 
 BG, LIME, LIGHT, SUB, MUTED, RULE = "#0E3B2E", "#C8F04A", "#F6F4EE", "#CFE0D6", "#A9C4B6", "#2B5A49"
 OKRUG_FILL, OTHER_FILL = "#3A7A60", "#1A4F3F"
+# ступени сетки «Аналитики» от «по старту» к «дороже на 20 %+»: проверены на фоне BG (различимы при дальтонизме, контраст ≥ 3:1)
+STEPS = ("#5B9079", "#8AB43C", LIME)
 
 ILLUSTRATIONS = {"parking": ("parking.png", 1.9), "flat": ("flat.png", 1.0)}
 
@@ -182,6 +184,18 @@ CSS = f"""
 .title{{position:relative;font:700 64px/1.12 Unbounded;color:{LIGHT};letter-spacing:-.02em;margin-top:40px;
   max-width:880px;text-wrap:balance}}
 .lede{{position:relative;font:500 36px/1.3 Onest;color:{SUB};margin-top:32px;max-width:820px;text-wrap:pretty}}
+.sub{{position:relative;font:500 30px Onest;color:{MUTED};margin-top:14px}}
+.split{{position:relative;margin-top:auto;display:grid;grid-template-columns:1fr 1fr;column-gap:64px}}
+.col .label{{font:700 34px Onest;color:{LIGHT}}}
+.col .bigrow{{display:flex;align-items:baseline;gap:16px;margin:4px 0 20px}}
+.col .big{{font:800 84px/1 Unbounded;color:{LIGHT};letter-spacing:-.04em;white-space:nowrap}}
+.col .bigcap{{font:500 28px/1.2 Onest;color:{MUTED};white-space:nowrap}}
+.waffle{{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;width:380px}}
+.waffle i{{display:block;aspect-ratio:1;border-radius:6px}}
+.col .colfoot{{font:500 26px Onest;color:{MUTED};margin-top:16px}}
+.legend{{position:relative;display:flex;gap:36px;margin-top:30px;font:500 26px Onest;color:{SUB}}}
+.legend span{{display:flex;align-items:center;gap:10px;white-space:nowrap}}
+.legend i{{width:24px;height:24px;border-radius:5px;display:block}}
 .cover-illus{{position:absolute;right:70px;bottom:70px;width:300px;height:300px;object-fit:contain}}
 .steps{{position:absolute;left:76px;right:76px;bottom:68px;display:flex;gap:12px}}
 .steps i{{flex:1;height:12px;border-radius:6px;background:{RULE}}} .steps i.on{{background:{LIME}}}
@@ -276,6 +290,24 @@ def cover_html(c: dict) -> str:
   <div class="title">{escape(c.get("title") or "")}</div>{lede}""")
 
 
+def split_html(c: dict) -> str:
+    """«Аналитика»: заголовок title и строка sub, две колонки columns: [{label, cells, big, cap, foot}] —
+    сетка 10×10, cells — число клеток каждой ступени STEPS (в сумме 100), legend — подписи ступеней."""
+    def col(k: dict) -> str:
+        cells = "".join(f'<i style="background:{STEPS[i]}"></i>' for i, n in enumerate(k["cells"]) for _ in range(n))
+        foot = f'<div class="colfoot">{escape(k["foot"])}</div>' if k.get("foot") else ""
+        return (f'<div class="col"><div class="label">{escape(k["label"])}</div>'
+                f'<div class="bigrow"><div class="big">{escape(k["big"])}</div><div class="bigcap">{escape(k.get("cap") or "")}</div></div>'
+                f'<div class="waffle">{cells}</div>{foot}</div>')
+    legend = "".join(f'<span><i style="background:{STEPS[i]}"></i>{escape(t)}</span>'
+                     for i, t in enumerate(c.get("legend") or []))
+    return _page(f"""{_top(c)}
+  <div class="title" style="margin-top:44px">{escape(c.get("title") or "")}</div>
+  <div class="sub">{escape(c.get("sub") or "")}</div>
+  <div class="split">{"".join(col(k) for k in c.get("columns", [])[:2])}</div>
+  <div class="legend">{legend}</div>""")
+
+
 def render_html(html: str, out_path, chrome: str | None = None) -> Path:
     """Скриншот страницы 1080×1080 в PNG."""
     chrome = chrome or chrome_path()
@@ -299,7 +331,7 @@ def render_html(html: str, out_path, chrome: str | None = None) -> Path:
     return out
 
 
-TEMPLATES = {"lot": lot_html, "list": list_html, "stats": stats_html, "cover": cover_html}
+TEMPLATES = {"lot": lot_html, "list": list_html, "stats": stats_html, "cover": cover_html, "split": split_html}
 
 
 def render(card: dict, out_path) -> Path:

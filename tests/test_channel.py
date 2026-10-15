@@ -358,3 +358,37 @@ def test_endings_never_repeat(tmp_path):
     endings.record(log, ["Метр дешевле, а сдачи не будет."], date(2026, 10, 12))
     endings.write_list(tmp_path / "endings.txt", endings.load(log))
     assert "2026-10-12  Метр дешевле, а сдачи не будет." in (tmp_path / "endings.txt").read_text(encoding="utf-8")
+
+
+def test_analytics_outcomes(tmp_path):
+    """«Аналитика»: доли проданных по старту / до +20 % / +20 %+ в клетках из 100, несостоявшиеся — от проведённых;
+    цена не опубликована — не в долях, публичное предложение и отменённые — не в счёт."""
+    def row(i, kind, status, ratio=None, form="Открытый аукцион в электронной форме"):
+        return {"tender_id": str(i), "object_type": kind, "adm_area": "ЦАО", "trades_date": "2026-09-10",
+                "status": status, "procedure_form": form, "start_price": "1000000",
+                "final_price": str(1_000_000 * ratio) if ratio else "", "final_to_start": str(ratio) if ratio else ""}
+    rows, i = [], 0
+    for kind, spec in (("машино-место", [(1.0, 60), (1.1, 15), (1.5, 25)]), ("квартира", [(1.0, 20), (1.1, 50), (1.3, 30)])):
+        for ratio, n in spec:
+            for _ in range(n):
+                i += 1
+                rows.append(row(i, kind, "Признаны состоявшимися", ratio))
+        for status, extra in (("Признаны несостоявшимися", {}), ("Отменены", {}),
+                              ("Признаны состоявшимися", {"ratio": None}),
+                              ("Признаны состоявшимися", {"ratio": 0.5, "form": "Публичное предложение"})):
+            i += 1
+            rows.append(row(i, kind, status, **extra))
+    path = tmp_path / "res.csv"
+    torgi.save(path, {r["tender_id"]: r for r in rows})
+    today = date(2026, 10, 1)
+    assert "analytics" in content.default_rubrics(today) and "analytics" not in content.default_rubrics(date(2026, 10, 2))
+    posts = content.drafts(None, tmp_path, today, results_path=str(path), rubrics=("analytics",))
+    assert [p.key for p in posts] == ["analytics:outcomes:2026-10"]
+    card, f = posts[0].card, posts[0].facts["facts"]
+    assert card["template"] == "split" and [c["cells"] for c in card["columns"]] == [[60, 15, 25], [20, 50, 30]]
+    assert card["columns"][0]["big"] == "60%" and f["parking"]["sold_with_known_price"] == "100"
+    assert f["parking"]["auctions_held"] == "102" and f["parking"]["not_held_share"] == "1 %"
+    assert f["flats"]["sold_up_to_20_share"] == "50 %" and f["period"] == "3 июля – 30 сентября"
+    few = dict(content.POLICY, analytics_min=101)
+    assert content.drafts(None, tmp_path, today, results_path=str(path), rubrics=("analytics",), policy=few) == []
+    assert content._cells([1, 1, 1]) == [34, 33, 33]
