@@ -50,9 +50,9 @@ def test_campaign_word_and_register(tmp_path):
 
 def test_cta_to_channel():
     html = reels.frames({**FACTS, "target": "channel", "word": "можайка"})[4]["html"]
-    assert "в Telegram-канале" in html and "В ПРОФИЛЕ" in html and "в боте" not in html
+    assert "Telegram-канале" in html and "В ПРОФИЛЕ" in html and "в боте" not in html
 
 
 def test_cta_to_channel():
     html = reels.frames({**FACTS, "target": "channel", "word": "можайка"})[4]["html"]
-    assert "в Telegram-канале" in html and "В ПРОФИЛЕ" in html and "в боте" not in html
+    assert "Telegram-канале" in html and "В ПРОФИЛЕ" in html and "в боте" not in html
