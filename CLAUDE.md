@@ -13,7 +13,8 @@
 2. Канал только читает Пульс; Пульс не должен зависеть от `parkan/channel`. Пороги канала — `POLICY`
    в `parkan/channel/content.py`, не трогать ради канала пороги сводки Trello в `parkan/track/digest.py`.
 3. После изменений обновить в `docs/channel.md` разделы «Состояние» и «Журнал решений» (с датой).
-4. Тексты постов пишутся по навыку `.claude/skills/channel-copy` (факты — `channel_out/<дата>/*.facts.json`,
+4. Рилсы для Instagram (кадры, описание, комментарий, учёт ссылок) — по навыку `.claude/skills/reels`.
+5. Тексты постов пишутся по навыку `.claude/skills/channel-copy` (факты — `channel_out/<дата>/*.facts.json`,
    проверка — `parkan channel-lint`, отправка — `parkan channel-send`).
 
 ## Соглашения
