@@ -8,7 +8,8 @@
 Факты ролика — JSON (пример — docs/design/reels/2026-10-15-mozhayskoe/facts.json):
   type        parking | flat (иллюстрация и слово «машино-место»/«квартира»)
   price       стартовая цена, ₽
-  median      медиана старта в районе, ₽ (для квартир — посчитайте по ₽/м² заранее и дайте цену)
+  median      медиана старта в районе, ₽ (машино-места)
+  median_m2   медиана старта за м² в районе, ₽/м² (квартиры: сравнение за м², как в канале; нужна area)
   address     адрес объекта
   district    район (как в moscow-geo.json, «Кузьминки», «Мещанский район»)
   area        площадь, м² (необязательно)
@@ -165,17 +166,19 @@ def _map(district: str | None) -> str:
 
 
 def frame_compare(f: dict) -> str:
-    price, median = f["price"], f["median"]
+    if f.get("median_m2"):      # квартиры сравниваются за м², как в канале
+        price, median, unit, full = f["price"] / f["area"], f["median_m2"], "/м²", 912 - 420
+    else:
+        price, median, unit, full = f["price"], f["median"], "", 912 - 330   # ширина полосы медианы; подпись справа
     pct = discount(price, median)
-    full = 912 - 330            # ширина полосы медианы; подпись справа
     return _page(f"""{_top("СРАВНИМ")}
   <div class="bars">
-    <div class="bar"><div class="cap">Медиана {escape(f.get("scope") or "района")}</div>
+    <div class="bar"><div class="cap">Медиана {escape(f.get("scope") or "района")}{", за м²" if unit else ""}</div>
       <div class="line"><div class="fill" style="width:{full}px;background:{RULE}"></div>
-      <div class="val">{escape(money_text(median))}</div></div></div>
-    <div class="bar"><div class="cap">Этот объект</div>
+      <div class="val">{escape(money_text(median) + unit)}</div></div></div>
+    <div class="bar"><div class="cap">Этот объект{", за м²" if unit else ""}</div>
       <div class="line"><div class="fill" style="width:{full * price / median:.0f}px;background:{LIME}"></div>
-      <div class="val">{escape(money_text(price))}</div></div></div>
+      <div class="val">{escape(money_text(price) + unit)}</div></div></div>
   </div>
   <div class="diff"><div class="big">−{pct}%</div><div class="note">ниже медианы {escape(f.get("scope") or "района")}</div></div>""", 3)
 
@@ -231,7 +234,9 @@ def render(facts: dict, out_dir, fmt: str = "reel") -> list[Path]:
 
 def load_facts(path) -> dict:
     f = json.loads(Path(path).read_text(encoding="utf-8"))
-    missing = [k for k in ("price", "median", "address") if not f.get(k)]
+    missing = [k for k in ("price", "address") if not f.get(k)]
+    if not (f.get("median") or (f.get("median_m2") and f.get("area"))):
+        missing.append("median (или median_m2 и area)")
     if missing:
         raise ValueError("в фактах ролика нет: " + ", ".join(missing))
     if f.get("campaign") and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", f["campaign"]):
@@ -257,3 +262,19 @@ def register(facts: dict, path) -> dict:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(items, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return items[facts["campaign"]]
+
+
+def stats_post(card: dict, out_path) -> Path:
+    """Пост одной картинкой 4:5 на макете сводки канала (html_cards.stats_html): kicker, headline, headline_sub,
+    deadline (плашка с периодом), stats [{num, cap, lime}], foot, districts (подсветка на карте)
+    или illus (parking / flat) — иллюстрация вместо карты."""
+    html = hc.stats_html({"brand": "ПОПУТНЫЙ МЕТР", **card})
+    if card.get("illus"):   # иллюстрация (parking / flat) вместо карты — когда подсвечивать нечего
+        img, scale = ILLUSTRATIONS[card["illus"]]
+        html = re.sub(r'<div class="mapbox">.*?</svg></div>',
+                      f'<img class="mapbox" src="{(ASSETS / img).as_uri()}" '
+                      f'style="object-fit:contain;width:460px;height:460px;right:40px;transform:scale({scale})">',
+                      html, count=1, flags=re.S)
+    # 4:5 выше квадрата: шапку и карту опускаем, чтобы между ними и цифрами внизу не было пустоты
+    html = html.replace("</style>", f".card{{height:{POST_H}px}} .head{{margin-top:230px}} .mapbox{{top:250px}}</style>", 1)
+    return hc.render_html(html, out_path, size=(POST_W, POST_H))

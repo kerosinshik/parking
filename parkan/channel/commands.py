@@ -369,6 +369,12 @@ def cmd_market_page(a, con) -> int:
 def cmd_channel_reel(a, con) -> int:
     """Кадры ролика для Instagram Reels (1080×1920) по фактам из JSON."""
     from . import reels
+    if a.card:   # пост одной картинкой на макете сводки канала
+        card = json.loads(Path(a.card).read_text(encoding="utf-8"))
+        print(reels.stats_post(card, Path(a.out) / "post.png"))
+        return 0
+    if not a.facts:
+        raise ValueError("нужен --facts (рилс, карусель) или --card (пост одной картинкой)")
     facts = reels.load_facts(a.facts)
     for p in reels.render(facts, a.out, a.format):
         print(p)
@@ -443,7 +449,9 @@ def register(sub) -> None:
     sp.set_defaults(fn=cmd_channel_market, track=True)
 
     sp = sub.add_parser("channel-reel", help="кадры ролика для Instagram Reels по фактам лота (docs/channel.md, «Ролики»)")
-    sp.add_argument("--facts", required=True, help="JSON фактов, пример — docs/design/reels/example.facts.json")
+    sp.add_argument("--facts", help="JSON фактов лота, пример — docs/design/reels/2026-10-15-mozhayskoe/facts.json")
+    sp.add_argument("--card", help="JSON поста одной картинкой (4:5, макет сводки), пример — "
+                                   "docs/design/reels/2026-10-16-start-vs-final/card.json")
     sp.add_argument("--out", default="channel_out/reel", help="папка для кадров 01-price.png … 05-cta.png")
     sp.add_argument("--format", choices=sorted(reels_formats()), default="reel",
                     help="reel — рилс 1080×1920, post — карусель в ленту 1080×1350")

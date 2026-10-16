@@ -59,3 +59,10 @@ def test_post_format():
     assert all("height:1350px" in f["html"] for f in fr)
     assert "В ПРОФИЛЕ" in fr[4]["html"]
     assert "В ПРОФИЛЕ" not in reels.frames({**FACTS, "target": "channel"})[4]["html"]
+
+
+def test_flat_compare_per_m2():
+    f = {**FACTS, "type": "flat", "price": 8_721_000, "area": 37.5, "median_m2": 394_085}
+    del f["median"]
+    html = reels.frames(f, "post")[2]["html"]
+    assert "233 тыс. ₽/м²" in html and "394 тыс. ₽/м²" in html and "−41%" in html
