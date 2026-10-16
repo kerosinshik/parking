@@ -52,3 +52,10 @@ def test_cta_to_channel():
     html = reels.frames({**FACTS, "target": "channel", "word": "можайка"})[4]["html"]
     assert "Telegram-канале" in html and "ПРОФИЛЕ" not in html and "в боте" not in html
 
+
+
+def test_post_format():
+    fr = reels.frames({**FACTS, "target": "channel"}, "post")
+    assert all("height:1350px" in f["html"] for f in fr)
+    assert "В ПРОФИЛЕ" in fr[4]["html"]
+    assert "В ПРОФИЛЕ" not in reels.frames({**FACTS, "target": "channel"})[4]["html"]

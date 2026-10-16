@@ -370,7 +370,7 @@ def cmd_channel_reel(a, con) -> int:
     """Кадры ролика для Instagram Reels (1080×1920) по фактам из JSON."""
     from . import reels
     facts = reels.load_facts(a.facts)
-    for p in reels.render(facts, a.out):
+    for p in reels.render(facts, a.out, a.format):
         print(p)
     if facts.get("campaign"):
         print(f"Ссылка с меткой: {reels.bot_link(facts['campaign'])}")
@@ -378,6 +378,11 @@ def cmd_channel_reel(a, con) -> int:
             reels.register(facts, a.campaigns)
             print(f"Метка {facts['campaign']} записана в {a.campaigns} — закоммитьте его в ветку data, бот подхватит после git pull")
     return 0
+
+
+def reels_formats():
+    from .reels import FORMATS
+    return FORMATS
 
 
 def register(sub) -> None:
@@ -440,6 +445,8 @@ def register(sub) -> None:
     sp = sub.add_parser("channel-reel", help="кадры ролика для Instagram Reels по фактам лота (docs/channel.md, «Ролики»)")
     sp.add_argument("--facts", required=True, help="JSON фактов, пример — docs/design/reels/example.facts.json")
     sp.add_argument("--out", default="channel_out/reel", help="папка для кадров 01-price.png … 05-cta.png")
+    sp.add_argument("--format", choices=sorted(reels_formats()), default="reel",
+                    help="reel — рилс 1080×1920, post — карусель в ленту 1080×1350")
     sp.add_argument("--campaigns", help="записать метку ролика в campaigns.json бота "
                                         "(обычно <data>/channel_state/bot/campaigns.json)")
     sp.set_defaults(fn=cmd_channel_reel, track=True)

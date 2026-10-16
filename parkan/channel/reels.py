@@ -104,6 +104,25 @@ def discount(price: float, median: float) -> int:
     return round((1 - price / median) * 100)
 
 
+# пост-карусель в ленте: 4:5, интерфейса поверх картинки нет — поля меньше, крупные элементы мельче
+POST_W, POST_H = 1080, 1350
+POST_CSS = f"""
+.reel{{height:{POST_H}px;padding:124px 76px 84px}}
+.steps{{top:56px;left:76px;right:76px}}
+.lead{{margin-top:70px;font-size:52px}}
+.big{{font-size:210px}} .unit{{font-size:58px}}
+.illus{{right:40px;bottom:70px;width:420px;height:420px}}
+.mapbox{{margin-top:0;transform:scale(1.08)}}
+.panel{{padding-top:32px}} .addr{{font-size:50px}} .facts{{margin-top:26px}}
+.bars{{margin-top:70px;gap:44px}} .bar .fill{{height:120px}}
+.diff .big{{font-size:210px}}
+.title{{margin-top:70px}}
+.checks{{gap:24px}}
+.cta-illus{{width:330px;height:330px}}
+"""
+FORMATS = {"reel": ((RW, RH), ""), "post": ((POST_W, POST_H), POST_CSS)}
+
+
 def _page(body: str, step: int, total: int = 5) -> str:
     steps = "".join(f'<i class="{"on" if i < step else ""}"></i>' for i in range(total))
     return (f'<!doctype html><html><head><meta charset="utf-8"><style>{hc._fonts_css()}{CSS}</style></head>'
@@ -177,11 +196,13 @@ SEARCH_ICON = (f'<svg width="64" height="64" viewBox="0 0 24 24" fill="none" str
 def frame_cta(f: dict) -> str:
     bot = f.get("bot") or "Попутный метр"
     img, scale = ILLUSTRATIONS.get(f.get("type") or "parking", ILLUSTRATIONS["parking"])
+    # в посте стикер-ссылку не наложить: зовём в профиль; в рилсе место под стикер автора
+    hint = '<div class="hint">Ссылка на канал —<b class="word">В ПРОФИЛЕ</b></div>' if f.get("_fmt") == "post" else ""
     if f.get("target") == "channel":   # без бота: ссылку на канал автор накладывает на кадр сам при монтаже
         return _page(f"""{_top("В TELEGRAM")}
   <div class="title" style="font-size:74px">Весь объект и ссылка на&nbsp;торги&nbsp;— <em style="white-space:nowrap">в Telegram-канале</em></div>
   <img class="cta-illus" src="{(ASSETS / img).as_uri()}" style="transform:scale({scale * 0.8})">
-  <div class="search">{SEARCH_ICON}<span>{escape(bot)}<i></i></span></div>""", 5)
+  <div class="search">{SEARCH_ICON}<span>{escape(bot)}<i></i></span></div>{hint}""", 5)
     word = (f'<br>и отправь боту слово<b class="word">{escape(f["word"].upper())}</b>') if f.get("word") else ""
     return _page(f"""{_top("В TELEGRAM")}
   <div class="title">Весь объект и ссылка на торги — <em>в боте</em></div>
@@ -195,15 +216,17 @@ SCRIPT = (("01-price", "0–3", frame_price), ("02-place", "3–7", frame_place)
           ("04-caveat", "12–17", frame_caveat), ("05-cta", "17–20", frame_cta))
 
 
-def frames(facts: dict) -> list[dict]:
-    """HTML кадров по сценарию: [{name, sec, html}]."""
-    return [{"name": n, "sec": sec, "html": make(facts)} for n, sec, make in SCRIPT]
+def frames(facts: dict, fmt: str = "reel") -> list[dict]:
+    """HTML кадров по сценарию: [{name, sec, html}]; fmt — reel (1080×1920) или post (карусель 1080×1350)."""
+    extra = FORMATS[fmt][1]
+    f = {**facts, "_fmt": fmt}
+    return [{"name": n, "sec": sec, "html": make(f).replace("</style>", extra + "</style>", 1)} for n, sec, make in SCRIPT]
 
 
-def render(facts: dict, out_dir) -> list[Path]:
-    """Нарисовать кадры ролика в out_dir: 01-price.png … 05-cta.png."""
-    out = Path(out_dir)
-    return [hc.render_html(fr["html"], out / f'{fr["name"]}.png', size=(RW, RH)) for fr in frames(facts)]
+def render(facts: dict, out_dir, fmt: str = "reel") -> list[Path]:
+    """Нарисовать кадры в out_dir: 01-price.png … 05-cta.png (fmt — reel или post)."""
+    out, size = Path(out_dir), FORMATS[fmt][0]
+    return [hc.render_html(fr["html"], out / f'{fr["name"]}.png', size=size) for fr in frames(facts, fmt)]
 
 
 def load_facts(path) -> dict:
