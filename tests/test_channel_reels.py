@@ -46,3 +46,13 @@ def test_campaign_word_and_register(tmp_path):
     with pytest.raises(ValueError, match="занято"):
         reels.register({**FACTS, "campaign": "igr02", "word": "Можайка"}, p)
     assert reels.bot_link("igr01").endswith("?start=igr01")
+
+
+def test_cta_to_channel():
+    html = reels.frames({**FACTS, "target": "channel", "word": "можайка"})[4]["html"]
+    assert "в Telegram-канале" in html and "В ПРОФИЛЕ" in html and "в боте" not in html
+
+
+def test_cta_to_channel():
+    html = reels.frames({**FACTS, "target": "channel", "word": "можайка"})[4]["html"]
+    assert "в Telegram-канале" in html and "В ПРОФИЛЕ" in html and "в боте" not in html
