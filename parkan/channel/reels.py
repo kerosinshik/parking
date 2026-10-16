@@ -19,6 +19,13 @@
   campaign    метка ролика для аналитики: ig01 → t.me/<бот>?start=ig01 (буквы, цифры, _ и -, до 64 знаков)
   word        кодовое слово для тех, кто найдёт бота поиском: печатается на последнем кадре
   bot         имя канала/бота для поиска в Telegram (по умолчанию «Попутный метр»)
+
+Второй сценарий — «топ» (format: "top", пример — docs/design/reels/2026-10-16-top/facts.json): самое дешёвое
+→ три самых дешёвых лота → медианы округов (самый дешёвый и самый дорогой) → оговорка → призыв в бот.
+Факты собирает top_facts() из журнала (`channel-reel --top`):
+  lots        [{price, address, district, area, until, lot_id, url}] — по цене, по адресу один лот
+  adm         [{name, short, med, houses, n}] — самый дешёвый и самый дорогой округ по медиане старта (по домам)
+  lot_id      лот № 1 — его откроют метка и кодовое слово
 """
 
 from __future__ import annotations
@@ -31,6 +38,7 @@ from pathlib import Path
 
 from . import html_cards as hc
 from .html_cards import ASSETS, BG, ILLUSTRATIONS, LIGHT, LIME, MUTED, RULE, SUB
+from .templates import day
 
 RW, RH = 1080, 1920
 # безопасная зона Reels: сверху ник и звук, снизу подпись и кнопки — важное держим между ними
@@ -81,6 +89,15 @@ CSS = f"""
 .search span{{font:700 58px Onest;color:{BG}}}
 .search i{{display:inline-block;width:5px;height:62px;background:{BG};margin-left:6px;vertical-align:-10px}}
 .hint{{font:500 40px/1.3 Onest;color:{MUTED};margin-top:30px;text-align:center}}
+.rows{{margin-top:56px;display:flex;flex-direction:column;gap:44px}}
+.row{{display:flex;gap:32px;align-items:flex-start;border-top:2px solid {RULE};padding-top:40px}}
+.row b{{flex:none;width:76px;height:76px;border-radius:50%;background:{LIME};color:{BG};
+  display:flex;align-items:center;justify-content:center;font:800 40px Unbounded;margin-top:6px}}
+.row .price{{font:800 84px/1 Unbounded;color:{LIME};letter-spacing:-.03em;white-space:nowrap}}
+.row .addr{{font-size:44px;margin-top:16px}}
+.row .district{{font-size:34px;margin-top:10px}}
+.nw{{white-space:nowrap}}
+.title.small{{font-size:68px;margin-top:90px}}
 .hint .word{{display:block;margin-top:10px;font:800 64px Unbounded;color:{LIME};letter-spacing:.02em}}
 """
 
@@ -161,11 +178,15 @@ def frame_compare(f: dict) -> str:
 
 
 def frame_caveat(f: dict) -> str:
-    items = ["Стартовая цена растёт на аукционе", "Обременения и состояние", "Задаток и сроки заявок"]
+    top = f.get("format") == "top"
+    items = ["Стартовые цены растут на аукционе" if top else "Стартовая цена растёт на аукционе",
+             "Обременения и состояние", "Задаток и сроки заявок"]
     checks = "".join(f'<div class="check"><b>{i + 1}</b>{escape(t)}</div>' for i, t in enumerate(items))
+    title, note = (("Это <em>стартовые</em> цены, а не цены покупки", "Условия каждого лота нужно проверять") if top else
+                   ("Это <em>стартовая</em> цена, а не гарантированная цена покупки", "Условия объекта нужно проверять"))
     return _page(f"""{_top("ВАЖНО")}
-  <div class="title">Это <em>стартовая</em> цена, а не гарантированная цена покупки</div>
-  <div class="note" style="font-size:46px;color:{SUB};margin-top:44px">Условия объекта нужно проверять</div>
+  <div class="title">{title}</div>
+  <div class="note" style="font-size:46px;color:{SUB};margin-top:44px">{note}</div>
   <div class="checks">{checks}</div>""", 4)
 
 
@@ -178,10 +199,59 @@ def frame_cta(f: dict) -> str:
     img, scale = ILLUSTRATIONS.get(f.get("type") or "parking", ILLUSTRATIONS["parking"])
     word = (f'<br>и отправь боту слово<b class="word">{escape(f["word"].upper())}</b>') if f.get("word") else ""
     return _page(f"""{_top("В TELEGRAM")}
-  <div class="title">Весь объект и ссылка на торги — <em>в боте</em></div>
+  <div class="title">{"Лот № 1 и ссылка на торги" if f.get("format") == "top" else "Весь объект и ссылка на торги"} — <em>в боте</em></div>
   <img class="cta-illus" src="{(ASSETS / img).as_uri()}" style="transform:scale({scale * 0.8})">
   <div class="search">{SEARCH_ICON}<span>{escape(bot)}<i></i></span></div>
   <div class="hint">Ищи «{escape(bot)}» в Telegram{word}</div>""", 5)
+
+
+ADM_SHORT = {"Центральный": "ЦАО", "Северный": "САО", "Северо-Восточный": "СВАО", "Восточный": "ВАО",
+             "Юго-Восточный": "ЮВАО", "Южный": "ЮАО", "Юго-Западный": "ЮЗАО", "Западный": "ЗАО",
+             "Северо-Западный": "СЗАО", "Зеленоградский": "ЗелАО", "Новомосковский": "НАО", "Троицкий": "ТАО"}
+
+
+def adm_short(name: str | None) -> str:
+    """«Юго-Западный административный округ» → «ЮЗАО»."""
+    head = (name or "").split(" административный")[0].strip()
+    return ADM_SHORT.get(head, head)
+
+
+def frame_cheapest(f: dict) -> str:
+    first = f["lots"][0]
+    num, unit = money(first["price"])
+    img, scale = ILLUSTRATIONS.get(f.get("type") or "parking", ILLUSTRATIONS["parking"])
+    return _page(f"""{_top("ТОРГИ МОСКВЫ")}
+  <div class="lead">Самое дешёвое <span class="nw">{escape(KIND.get(f.get("type"), "объект"))}</span> на торгах Москвы —</div>
+  <div class="big">{escape(num)}</div><div class="unit">{escape(unit)}</div>
+  <div class="note">из лотов, на которые ещё можно подать заявку</div>
+  <img class="illus" src="{(ASSETS / img).as_uri()}" style="transform:scale({scale})">""", 1)
+
+
+def frame_top(f: dict) -> str:
+    rows = []
+    for i, lot in enumerate(f["lots"], 1):
+        meta = " · ".join(x for x in (hc.district_line(lot.get("district")), lot.get("until")) if x)
+        rows.append(f'<div class="row"><b>{i}</b><div><div class="price">{escape(money_text(lot["price"]))}</div>'
+                    f'<div class="addr">{escape(lot["address"])}</div><div class="district">{escape(meta)}</div></div></div>')
+    kind = "машино-места" if (f.get("type") or "parking") == "parking" else "квартиры"
+    return _page(f"""{_top(f"ТОП-{len(rows)}")}
+  <div class="title small">Самые дешёвые <span class="nw">{kind}</span> <em>сейчас</em></div>
+  <div class="rows">{"".join(rows)}</div>""", 2)
+
+
+def frame_adm(f: dict) -> str:
+    lo, hi = f["adm"][0], f["adm"][-1]
+    full = 912 - 330
+    ratio = f"{hi['med'] / lo['med']:.1f}".replace(".", ",")
+    bars = "".join(
+        f'<div class="bar"><div class="cap">{escape(cap)} — {escape(a.get("short") or adm_short(a["name"]))}</div>'
+        f'<div class="line"><div class="fill" style="width:{full * a["med"] / hi["med"]:.0f}px;background:{color}"></div>'
+        f'<div class="val">{escape(money_text(a["med"]))}</div></div></div>'
+        for cap, a, color in (("Дешевле всех", lo, LIME), ("Дороже всех", hi, RULE)))
+    return _page(f"""{_top("ПО ОКРУГАМ")}
+  <div class="lead" style="margin-top:90px">Медиана стартовой цены по округам</div>
+  <div class="bars" style="margin-top:70px">{bars}</div>
+  <div class="diff"><div class="big">×{ratio}</div><div class="note">разница между округами</div></div>""", 3)
 
 
 # сценарий: (имя файла, секунды на таймлайне, кадр)
@@ -189,9 +259,39 @@ SCRIPT = (("01-price", "0–3", frame_price), ("02-place", "3–7", frame_place)
           ("04-caveat", "12–17", frame_caveat), ("05-cta", "17–20", frame_cta))
 
 
+TOP_SCRIPT = (("01-cheapest", "0–3", frame_cheapest), ("02-top", "3–9", frame_top), ("03-adm", "9–13", frame_adm),
+              ("04-caveat", "13–17", frame_caveat), ("05-cta", "17–20", frame_cta))
+
+
 def frames(facts: dict) -> list[dict]:
     """HTML кадров по сценарию: [{name, sec, html}]."""
-    return [{"name": n, "sec": sec, "html": make(facts)} for n, sec, make in SCRIPT]
+    script = TOP_SCRIPT if facts.get("format") == "top" else SCRIPT
+    return [{"name": n, "sec": sec, "html": make(facts)} for n, sec, make in script]
+
+
+def top_facts(con, today, kind: str = "parking", n: int = 3, days: int = 10, min_houses: int = 7) -> dict:
+    """Факты ролика-топа из журнала (после lots.load): n самых дешёвых лотов с заявками ещё хотя бы days дней
+    и самый дешёвый/дорогой округ по медиане старта (округа, где лоты хотя бы в min_houses домах)."""
+    from datetime import timedelta
+    from . import lots
+    until_from = today + timedelta(days=days)
+    found = lots.cheapest(con, kind, until_from, n)
+    adms = lots.adm_medians(con, kind, min_houses)
+    if not found or len(adms) < 2:
+        raise ValueError("в журнале не хватает лотов или округов для топа")
+    total = con.execute("SELECT count(*) FROM ch_sale WHERE kind = ?", [kind]).fetchone()[0]
+    return {
+        "format": "top", "type": kind, "date": today.isoformat(),
+        "lots": [{"price": r["price"], "address": r["place"], "district": r["district"], "area": r["space"],
+                  "until": f"заявки до {day(r['end_d'])}", "trades": r["trades_d"].isoformat() if r["trades_d"] else None,
+                  "lot_id": r["lot_id"], "url": r["url"]} for r in found],
+        "adm": [{"name": a["adm"], "short": adm_short(a["adm"]), "med": a["med"], "houses": a["houses"], "n": a["n"]}
+                for a in (adms[0], adms[-1])],
+        "lot_id": found[0]["lot_id"],
+        "source": (f"журнал Пульса (набор № 1461) на {today:%d.%m.%Y}: {total} лотов {KIND.get(kind, kind)} в продаже; "
+                   f"топ — лоты с заявками до {until_from:%d.%m.%Y} и позже, по адресу один; медианы округов — по домам, "
+                   f"только округа, где лоты хотя бы в {min_houses} домах ({len(adms)} округов)"),
+    }
 
 
 def render(facts: dict, out_dir) -> list[Path]:
@@ -202,7 +302,8 @@ def render(facts: dict, out_dir) -> list[Path]:
 
 def load_facts(path) -> dict:
     f = json.loads(Path(path).read_text(encoding="utf-8"))
-    missing = [k for k in ("price", "median", "address") if not f.get(k)]
+    need = ("lots", "adm") if f.get("format") == "top" else ("price", "median", "address")
+    missing = [k for k in need if not f.get(k)]
     if missing:
         raise ValueError("в фактах ролика нет: " + ", ".join(missing))
     if f.get("campaign") and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", f["campaign"]):

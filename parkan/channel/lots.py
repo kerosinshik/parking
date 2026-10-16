@@ -201,6 +201,29 @@ def snapshot(con) -> dict[str, dict]:
     return out
 
 
+def cheapest(con, kind: str, until_from: date, n: int) -> list[dict]:
+    """Самые дешёвые лоты в продаже, заявки на которые принимают хотя бы до until_from; по адресу — один, самый дешёвый."""
+    return _finish(_rows(con, """
+        SELECT * EXCLUDE (rn) FROM (
+            SELECT *, row_number() OVER (PARTITION BY address ORDER BY price, lot_id) AS rn
+            FROM ch_sale WHERE kind = ? AND end_d >= ?
+        ) WHERE rn = 1 ORDER BY price, lot_id LIMIT ?
+    """, [kind, until_from, n]))
+
+
+def adm_medians(con, kind: str, min_houses: int) -> list[dict]:
+    """Медиана старта по округам — по домам, как медиана района в load(): один большой дом не задаёт цену округа.
+
+    Округа, где лоты меньше чем в min_houses домах, не берутся (в ЦАО на 16.10.2026 — 92 из 95 лотов в одном комплексе)."""
+    metric = "price / nullif(space, 0)" if kind == "flat" else "price"
+    return _rows(con, f"""
+        WITH h AS (SELECT adm, address, median({metric}) AS hm, count(*) AS n
+                   FROM ch_sale WHERE kind = ? AND adm IS NOT NULL GROUP BY ALL)
+        SELECT adm, median(hm) AS med, count(*) AS houses, sum(n)::INT AS n
+        FROM h WHERE hm IS NOT NULL GROUP BY adm HAVING count(*) >= ? ORDER BY med
+    """, [kind, min_houses])
+
+
 # ---------------------------------------------------------------- итоги торгов (таблица track-torgi)
 
 def _f(x) -> float | None:

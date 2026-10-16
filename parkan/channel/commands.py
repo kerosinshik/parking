@@ -424,9 +424,24 @@ def cmd_channel_houses(a, con) -> int:
 
 
 def cmd_channel_reel(a, con) -> int:
-    """Кадры ролика для Instagram Reels (1080×1920) по фактам из JSON."""
+    """Кадры ролика для Instagram Reels (1080×1920) по фактам из JSON или топ дешёвых лотов из журнала (--top)."""
     from . import reels
-    facts = reels.load_facts(a.facts)
+    if a.top:
+        today = date.fromisoformat(a.today) if a.today else now_msk().date()
+        if not lots.load(con, a.state_dir, today):
+            print(f"Нет журнала набора № 1461 в {a.state_dir}", file=sys.stderr)
+            return 1
+        facts = reels.top_facts(con, today, days=a.days)
+        if a.facts:   # метка, кодовое слово и прочее — из файла, числа — из журнала
+            facts = {**json.loads(Path(a.facts).read_text(encoding="utf-8")), **facts}
+        Path(a.out).mkdir(parents=True, exist_ok=True)
+        (Path(a.out) / "facts.json").write_text(json.dumps(facts, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(Path(a.out) / "facts.json")
+    elif a.facts:
+        facts = reels.load_facts(a.facts)
+    else:
+        print("Нужен --facts или --top", file=sys.stderr)
+        return 2
     for p in reels.render(facts, a.out):
         print(p)
     if facts.get("campaign"):
@@ -495,8 +510,13 @@ def register(sub) -> None:
     sp.set_defaults(fn=cmd_channel_market, track=True)
 
     sp = sub.add_parser("channel-reel", help="кадры ролика для Instagram Reels по фактам лота (docs/channel.md, «Ролики»)")
-    sp.add_argument("--facts", required=True, help="JSON фактов, пример — docs/design/reels/example.facts.json")
-    sp.add_argument("--out", default="channel_out/reel", help="папка для кадров 01-price.png … 05-cta.png")
+    sp.add_argument("--facts", help="JSON фактов, пример — docs/design/reels/2026-10-15-mozhayskoe/facts.json; "
+                                     "с --top из него берутся только метка, слово и подписи")
+    sp.add_argument("--top", action="store_true", help="ролик-топ: самые дешёвые машино-места и округа из журнала")
+    sp.add_argument("--days", type=int, default=10, help="--top: заявки принимают ещё хотя бы столько дней")
+    sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (track-sync), для --top")
+    sp.add_argument("--today", help="дата ГГГГ-ММ-ДД вместо сегодняшней (для --top)")
+    sp.add_argument("--out", default="channel_out/reel", help="папка для кадров 01-… 05-cta.png")
     sp.add_argument("--campaigns", help="записать метку ролика в campaigns.json бота "
                                         "(обычно <data>/channel_state/bot/campaigns.json)")
     sp.set_defaults(fn=cmd_channel_reel, track=True)
