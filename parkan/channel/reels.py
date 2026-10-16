@@ -18,8 +18,7 @@
   lot_id      id лота в снимке бота — его откроют метка и кодовое слово
   campaign    метка ролика для аналитики: ig01 → t.me/<бот>?start=ig01 (буквы, цифры, _ и -, до 64 знаков)
   word        кодовое слово для тех, кто найдёт бота поиском: печатается на последнем кадре
-  target      channel — последний кадр зовёт в канал по ссылке из профиля (без бота); по умолчанию — в бота
-  target      channel — последний кадр зовёт в канал по ссылке из профиля (без бота); по умолчанию — в бота
+  target      channel — последний кадр зовёт в канал; ссылку автор накладывает при монтаже (без бота); по умолчанию — в бота
   bot         имя канала/бота для поиска в Telegram (по умолчанию «Попутный метр»)
 """
 
@@ -178,18 +177,11 @@ SEARCH_ICON = (f'<svg width="64" height="64" viewBox="0 0 24 24" fill="none" str
 def frame_cta(f: dict) -> str:
     bot = f.get("bot") or "Попутный метр"
     img, scale = ILLUSTRATIONS.get(f.get("type") or "parking", ILLUSTRATIONS["parking"])
-    if f.get("target") == "channel":   # бот не нужен: ведём в канал по ссылке из профиля
+    if f.get("target") == "channel":   # без бота: ссылку на канал автор накладывает на кадр сам при монтаже
         return _page(f"""{_top("В TELEGRAM")}
-  <div class="title">Весь объект и ссылка на торги — <em>в&nbsp;Telegram-канале</em></div>
+  <div class="title" style="font-size:74px">Весь объект и ссылка на&nbsp;торги&nbsp;— <em style="white-space:nowrap">в Telegram-канале</em></div>
   <img class="cta-illus" src="{(ASSETS / img).as_uri()}" style="transform:scale({scale * 0.8})">
-  <div class="search">{SEARCH_ICON}<span>{escape(bot)}<i></i></span></div>
-  <div class="hint">Ссылка на канал —<b class="word">В ПРОФИЛЕ</b></div>""", 5)
-    if f.get("target") == "channel":   # без бота: ведём в канал по ссылке из профиля
-        return _page(f"""{_top("В TELEGRAM")}
-  <div class="title">Весь объект и ссылка на торги — <em>в&nbsp;Telegram-канале</em></div>
-  <img class="cta-illus" src="{(ASSETS / img).as_uri()}" style="transform:scale({scale * 0.8})">
-  <div class="search">{SEARCH_ICON}<span>{escape(bot)}<i></i></span></div>
-  <div class="hint">Ссылка на канал —<b class="word">В ПРОФИЛЕ</b></div>""", 5)
+  <div class="search">{SEARCH_ICON}<span>{escape(bot)}<i></i></span></div>""", 5)
     word = (f'<br>и отправь боту слово<b class="word">{escape(f["word"].upper())}</b>') if f.get("word") else ""
     return _page(f"""{_top("В TELEGRAM")}
   <div class="title">Весь объект и ссылка на торги — <em>в боте</em></div>
