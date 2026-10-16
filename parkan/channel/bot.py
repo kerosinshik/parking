@@ -36,7 +36,8 @@ from .telegram import CAPTION_LIMIT, Bot, TelegramError
 
 SHOW = 5                    # лотов в одном ответе
 FREE = 2                    # сколько лотов показываем без подписки — «попробовать»
-MEMBER_TTL = 600            # секунд: подписку не проверяем на каждое нажатие
+MEMBER_TTL = 86400          # секунд: подписку не перепроверяем (подписка — надолго)
+NONMEMBER_TTL = 30          # секунд: незнакомый юзер — перепроверяем часто (вдруг нажал "Готово")
 EXPORT_MIN_DISCOUNT = 0.10  # в снимок — лоты дешевле медианы хотя бы на 10 %
 GAME_DAYS = 90              # в игру — итоги за последние N дней
 NOTIFY_MAX = 5              # лотов в одном уведомлении (остальные — «ещё N»)
@@ -492,8 +493,9 @@ class Gate:
         """Подписан ли на канал. Если проверить нельзя (бот не администратор канала) — пускаем."""
         if not self.gate or uid in self.admins:
             return True
-        if self.member_cache.get(uid, 0) > self.clock():
-            return True
+        cached = self.member_cache.get(uid)
+        if cached is not None and cached[1] > self.clock():
+            return cached[0]
         try:
             st = self.bot.call("getChatMember", {"chat_id": self.chat, "user_id": uid})
         except TelegramError as e:
@@ -505,8 +507,8 @@ class Gate:
         self.check_broken = False
         ok = st.get("status") in MEMBER_STATUSES or bool(st.get("is_member"))
         self.store.set_member(uid, ok)
-        if ok:
-            self.member_cache[uid] = self.clock() + MEMBER_TTL
+        ttl = MEMBER_TTL if ok else NONMEMBER_TTL
+        self.member_cache[uid] = (ok, self.clock() + ttl)
         return ok
 
     def _subscribe_kb(self, retry: str) -> list:
