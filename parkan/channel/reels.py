@@ -78,6 +78,15 @@ CSS = f"""
 .check b{{flex:none;width:64px;height:64px;border-radius:50%;border:3px solid {LIME};color:{LIME};
   display:flex;align-items:center;justify-content:center;font:700 34px Unbounded}}
 .cta-illus{{display:block;width:460px;height:460px;object-fit:contain;margin:10px auto auto}}
+.rank{{margin-top:70px;display:flex;flex-direction:column;gap:30px}}
+.rrow .rl{{display:flex;justify-content:space-between;align-items:baseline;gap:20px}}
+.rrow .rn{{font:600 44px/1.15 Onest;color:{LIGHT}}} .rrow .rs{{font:500 32px Onest;color:{MUTED}}}
+.rrow .rv{{font:700 56px/1 Unbounded;color:{LIME};letter-spacing:-.03em;white-space:nowrap}}
+.rrow .rb{{height:14px;border-radius:7px;background:{LIME};margin-top:14px}}
+.rank.muted .rv{{color:{LIGHT}}} .rank.muted .rb{{background:{RULE}}}
+.pairs{{margin-top:auto;display:flex;flex-direction:column;gap:56px}}
+.pair .pn{{font:800 140px/1 Unbounded;color:{LIGHT};letter-spacing:-.04em;white-space:nowrap}}
+.pair .pn.lime{{color:{LIME}}} .pair .pc{{font:500 42px/1.25 Onest;color:{SUB};margin-top:14px}}
 .search{{background:{LIGHT};border-radius:70px;padding:34px 44px;display:flex;align-items:center;gap:30px}}
 .search svg{{flex:none}}
 .search span{{font:700 58px Onest;color:{BG}}}
@@ -120,6 +129,8 @@ POST_CSS = f"""
 .title{{margin-top:70px}}
 .checks{{gap:24px}}
 .cta-illus{{width:330px;height:330px}}
+.rank{{margin-top:44px;gap:22px}} .rrow .rn{{font-size:40px}} .rrow .rv{{font-size:50px}}
+.pairs{{gap:40px}} .pair .pn{{font-size:120px}}
 """
 FORMATS = {"reel": ((RW, RH), ""), "post": ((POST_W, POST_H), POST_CSS)}
 
@@ -196,6 +207,10 @@ SEARCH_ICON = (f'<svg width="64" height="64" viewBox="0 0 24 24" fill="none" str
                'stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>')
 
 
+CTA_LOT = "Весь объект и ссылка на&nbsp;торги"        # рилс или карусель про один лот
+CTA_TOPIC = "Лоты, итоги и ссылки на&nbsp;торги"      # тема из сценария (подборка, аналитика)
+
+
 def frame_cta(f: dict) -> str:
     bot = f.get("bot") or "Попутный метр"
     img, scale = ILLUSTRATIONS.get(f.get("type") or "parking", ILLUSTRATIONS["parking"])
@@ -203,7 +218,7 @@ def frame_cta(f: dict) -> str:
     hint = '<div class="hint">Ссылка на канал —<b class="word">В ПРОФИЛЕ</b></div>' if f.get("_fmt") == "post" else ""
     if f.get("target") == "channel":   # без бота: ссылку на канал автор накладывает на кадр сам при монтаже
         return _page(f"""{_top("В TELEGRAM")}
-  <div class="title" style="font-size:74px">Весь объект и ссылка на&nbsp;торги&nbsp;— <em style="white-space:nowrap">в Telegram-канале</em></div>
+  <div class="title" style="font-size:74px">{f.get("cta_title") or CTA_LOT}&nbsp;— <em style="white-space:nowrap">в Telegram-канале</em></div>
   <img class="cta-illus" src="{(ASSETS / img).as_uri()}" style="transform:scale({scale * 0.8})">
   <div class="search">{SEARCH_ICON}<span>{escape(bot)}<i></i></span></div>{hint}""", 5)
     word = (f'<br>и отправь боту слово<b class="word">{escape(f["word"].upper())}</b>') if f.get("word") else ""
@@ -278,3 +293,69 @@ def stats_post(card: dict, out_path) -> Path:
     # 4:5 выше квадрата: шапку и карту опускаем, чтобы между ними и цифрами внизу не было пустоты
     html = html.replace("</style>", f".card{{height:{POST_H}px}} .head{{margin-top:230px}} .mapbox{{top:250px}}</style>", 1)
     return hc.render_html(html, out_path, size=(POST_W, POST_H))
+
+
+# ---------------------------------------------------------------- сценарий из JSON (тема меняется, кадр 5 — нет)
+
+def _illus(kind: str | None) -> str:
+    if not kind:
+        return ""
+    img, scale = ILLUSTRATIONS[kind]
+    return f'<img class="illus" src="{(ASSETS / img).as_uri()}" style="transform:scale({scale})">'
+
+
+def _chips(items) -> str:
+    return '<div class="facts">' + "".join(f'<div class="chip">{escape(c)}</div>' for c in items) + "</div>" if items else ""
+
+
+def _slide(sl: dict, step: int, total: int) -> str:
+    """Слайд сценария по полю type: hook · map · rank · pairs · check."""
+    t, top = sl["type"], _top(sl.get("kicker") or "")
+    note = f'<div class="note">{escape(sl["note"])}</div>' if sl.get("note") else ""
+    if t == "hook":   # заход: вводная строка, крупная цифра, подпись, иллюстрация
+        unit = f'<div class="unit">{escape(sl["unit"])}</div>' if sl.get("unit") else ""
+        body = (f'{top}<div class="lead">{escape(sl.get("lead") or "")}</div>'
+                f'<div class="big">{escape(sl.get("big") or "")}</div>{unit}{note}{_illus(sl.get("illus"))}')
+    elif t == "map":  # карта: районы districts, внизу адрес, подпись и плашки
+        sub = f'<div class="district">{escape(sl["sub"])}</div>' if sl.get("sub") else ""
+        body = (f'{top}<div style="position:relative">{_map(sl.get("districts") or [])}</div>'
+                f'<div class="panel"><div class="addr">{escape(sl.get("title") or "")}</div>{sub}{_chips(sl.get("chips"))}</div>')
+    elif t == "rank":  # рейтинг: строки {name, sub, value, w 0..1}
+        rows = "".join(
+            f'<div class="rrow"><div class="rl"><div><div class="rn">{escape(r["name"])}</div>'
+            + (f'<div class="rs">{escape(r["sub"])}</div>' if r.get("sub") else "")
+            + f'</div><div class="rv">{escape(r["value"])}</div></div>'
+            f'<div class="rb" style="width:{max(0.04, min(1, r.get("w", 1))) * 100:.0f}%"></div></div>'
+            for r in sl["rows"])
+        body = (f'{top}<div class="title" style="font-size:64px">{sl.get("title") or ""}</div>'
+                f'<div class="rank{" muted" if sl.get("muted") else ""}">{rows}</div>{note}')
+    elif t == "pairs":  # две-три крупные цифры с подписями
+        pairs = "".join(f'<div class="pair"><div class="pn{" lime" if p.get("lime") else ""}">{escape(p["num"])}</div>'
+                        f'<div class="pc">{escape(p["cap"])}</div></div>' for p in sl["pairs"])
+        body = f'{top}<div class="title" style="font-size:64px">{sl.get("title") or ""}</div><div class="pairs">{pairs}</div>'
+    elif t == "check":  # «что проверить»: заголовок, подзаголовок, нумерованный список
+        items = "".join(f'<div class="check"><b>{i + 1}</b>{escape(x)}</div>' for i, x in enumerate(sl["items"]))
+        sub = f'<div class="note" style="font-size:46px;color:{SUB};margin-top:44px">{escape(sl["note"])}</div>' if sl.get("note") else ""
+        body = f'{top}<div class="title">{sl.get("title") or ""}</div>{sub}<div class="checks">{items}</div>'
+    else:
+        raise ValueError(f"неизвестный тип слайда: {t}")
+    return _page(body, step, total)
+
+
+def story_frames(story: dict, fmt: str = "reel") -> list[dict]:
+    """Кадры по сценарию story.json: slides (4 слайда темы) + неизменный последний кадр «в Telegram-канале».
+
+    Заголовки title — HTML (можно <em> для лайма), остальные поля — текст."""
+    extra, slides = FORMATS[fmt][1], story["slides"]
+    if len(slides) != 4:
+        raise ValueError("в сценарии 4 слайда темы, пятый — неизменный кадр «в Telegram-канале»")
+    html = [_slide(sl, i + 1, 5) for i, sl in enumerate(slides)]
+    html.append(frame_cta({"target": "channel", "type": story.get("illus") or "parking", "_fmt": fmt, "cta_title": CTA_TOPIC}))
+    total = 5
+    names = [f'{i + 1:02d}-{sl.get("name") or sl["type"]}' for i, sl in enumerate(slides)] + [f"{total:02d}-cta"]
+    return [{"name": n, "html": h.replace("</style>", extra + "</style>", 1)} for n, h in zip(names, html)]
+
+
+def render_story(story: dict, out_dir, fmt: str = "reel") -> list[Path]:
+    out, size = Path(out_dir), FORMATS[fmt][0]
+    return [hc.render_html(fr["html"], out / f'{fr["name"]}.png', size=size) for fr in story_frames(story, fmt)]

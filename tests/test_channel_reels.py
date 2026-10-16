@@ -66,3 +66,17 @@ def test_flat_compare_per_m2():
     del f["median"]
     html = reels.frames(f, "post")[2]["html"]
     assert "233 тыс. ₽/м²" in html and "394 тыс. ₽/м²" in html and "−41%" in html
+
+
+def test_story_slides_and_fixed_cta():
+    story = {"illus": "flat", "slides": [
+        {"type": "hook", "kicker": "К", "lead": "Где торгуются", "big": "+30%"},
+        {"type": "rank", "title": "Топ", "rows": [{"name": "Перово", "value": "+30,5%", "w": 1}]},
+        {"type": "pairs", "title": "Цифры", "pairs": [{"num": "92 из 95", "cap": "в одном доме"}]},
+        {"type": "check", "title": "Важно", "items": ["Старт — не итог"]}]}
+    fr = reels.story_frames(story, "post")
+    assert [f["name"] for f in fr] == ["01-hook", "02-rank", "03-pairs", "04-check", "05-cta"]
+    assert "Перово" in fr[1]["html"] and "92 из 95" in fr[2]["html"]
+    assert "Лоты, итоги" in fr[4]["html"] and "В ПРОФИЛЕ" in fr[4]["html"]
+    with pytest.raises(ValueError):
+        reels.story_frames({"slides": story["slides"][:3]})
