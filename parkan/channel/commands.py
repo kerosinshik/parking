@@ -437,6 +437,20 @@ def cmd_channel_reel(a, con) -> int:
     return 0
 
 
+def cmd_channel_overbid(a, con) -> int:
+    """Кадры видео для поста в Instagram (1080×1350): аномальная ставка и что было дальше."""
+    from . import overbid, reels
+    facts = overbid.load_facts(a.facts)
+    for p in overbid.render(facts, a.out):
+        print(p)
+    if facts.get("campaign"):
+        print(f"Ссылка с меткой: {reels.bot_link(facts['campaign'])}")
+        if a.campaigns:
+            reels.register(facts, a.campaigns)
+            print(f"Метка {facts['campaign']} записана в {a.campaigns} — закоммитьте его в ветку data, бот подхватит после git pull")
+    return 0
+
+
 def register(sub) -> None:
     sp = sub.add_parser("channel-draft", help="черновики постов для Telegram-канала (docs/channel.md)")
     sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (track-sync)")
@@ -500,6 +514,13 @@ def register(sub) -> None:
     sp.add_argument("--campaigns", help="записать метку ролика в campaigns.json бота "
                                         "(обычно <data>/channel_state/bot/campaigns.json)")
     sp.set_defaults(fn=cmd_channel_reel, track=True)
+
+    sp = sub.add_parser("channel-overbid", help="кадры видео для поста в Instagram (4:5): аномальная ставка на торгах "
+                                               "и что было дальше (docs/channel.md, «Видео в ленту»)")
+    sp.add_argument("--facts", required=True, help="JSON фактов, пример — docs/design/feed/2026-10-18-festivalnaya/facts.json")
+    sp.add_argument("--out", default="channel_out/overbid", help="папка для кадров 01-bid.png … 08-cta.png")
+    sp.add_argument("--campaigns", help="записать метку в campaigns.json бота (обычно <data>/channel_state/bot/campaigns.json)")
+    sp.set_defaults(fn=cmd_channel_overbid, track=True)
 
     sp = sub.add_parser("market-add", help="дописать рыночные цены из CSV в журнал рынка (docs/channel.md)")
     sp.add_argument("--file", required=True, help="CSV с колонками " + ", ".join(market.FIELDS[:-1]))
