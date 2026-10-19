@@ -47,3 +47,13 @@ def test_load_facts(tmp_path):
 def test_card_is_square_without_steps():
     html = overbid.card(FACTS)
     assert "height:1080px" in html and 'class="steps"' not in html and "2,13" in html
+
+
+def test_vc_images_without_steps():
+    cases = [{"place": "корп. 5, м/м 127", "start": 1_570_000, "bid": 15_778_500, "bid_date": "30.01.2026",
+              "resale_date": "17.04.2026", "resale_price": 3_297_000}]
+    f = {**FACTS, "cases": cases, "cases_title": "Один дом"}
+    pages = [make(f) for _, make in overbid.VC]
+    assert all('class="steps"' not in h for h in pages)
+    assert "15,78 млн ₽" in pages[3] and "3,3 млн ₽" in pages[3]
+    assert "×1\u202f650" in pages[1]

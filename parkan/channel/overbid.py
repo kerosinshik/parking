@@ -95,7 +95,7 @@ def money(rub: float) -> tuple[str, str]:
     for div, unit in ((1e9, "млрд ₽"), (1e6, "млн ₽")):
         if rub >= div:
             v = rub / div
-            s = f"{v:.2f}".rstrip("0").rstrip(".") if v < 10 else f"{v:.1f}".rstrip("0").rstrip(".")
+            s = f"{v:.2f}".rstrip("0").rstrip(".") if v < 100 else f"{v:.1f}".rstrip("0").rstrip(".")
             return s.replace(".", ","), unit
     return f"{round(rub / 1000):,}".replace(",", " "), "тыс. ₽"
 
@@ -244,3 +244,110 @@ def load_facts(path) -> dict:
     if f.get("photo"):
         f["photo"] = str((p.parent / f["photo"]).resolve())
     return f
+
+
+# ---------------------------------------------------------------- картинки для статьи (vc.ru и т. п.)
+
+VW, VH = 1600, 900   # 16:9 — во всю ширину колонки статьи, без полосы шагов
+
+VC_CSS = f"""
+.vc{{width:{VW}px;height:{VH}px;background:{BG};position:relative;overflow:hidden;font-family:Onest,sans-serif;
+  padding:72px 96px;display:flex;flex-direction:column}}
+.vc .cols{{flex:1;display:flex;gap:72px;margin-top:40px;min-height:0}}
+.vc .col{{flex:1;display:flex;flex-direction:column;min-width:0}}
+.vc .lead{{margin-top:0;font-size:46px}}
+.vc .big{{font-size:220px;margin-top:20px}}
+.vc .unit{{font-size:64px}}
+.vc .exact{{font-size:56px;padding-top:28px}}
+.vc .note{{font-size:32px;margin-top:12px}}
+.vc .vphoto{{flex:none;width:620px;border-radius:28px;overflow:hidden}}
+.vc .vphoto img{{width:100%;height:100%;object-fit:cover;object-position:50% 70%;display:block}}
+.vc .title{{margin-top:44px;font-size:64px}}
+.vc .scale{{margin-top:0;align-items:flex-end;flex:none;gap:48px}}
+.vc .scale .cap b{{white-space:nowrap}}
+.vc .times{{margin-top:auto;font-size:132px;white-space:nowrap}}
+.vc .times small{{font-size:34px;white-space:normal}}
+.htl{{margin-top:auto;display:grid;grid-template-columns:1fr 1fr;position:relative;padding-top:44px}}
+.htl:before{{content:"";position:absolute;left:28px;right:28px;top:72px;height:6px;background:{RULE}}}
+.htl .ev{{display:block;position:relative}}
+.htl .dot{{width:62px;height:62px;border-radius:50%;border:6px solid {LIME};background:{BG}}}
+.htl .dot.on{{background:{LIME}}}
+.htl .when{{font:600 34px Onest;color:{MUTED};margin-top:28px}}
+.htl .what{{font:700 50px/1.15 Onest;color:{LIGHT};margin-top:12px;max-width:620px;text-wrap:balance}}
+.htl .what em{{font-style:normal;color:{LIME}}}
+.rows{{margin-top:auto;display:flex;flex-direction:column}}
+.row{{display:grid;grid-template-columns:330px minmax(0,1fr) 100px minmax(0,1fr);align-items:center;column-gap:28px;padding:30px 0;
+  border-top:2px solid {RULE};font:600 36px Onest;color:{SUB}}}
+.row .k{{font:700 38px Onest;color:{LIGHT}}}
+.row .bid{{font:800 54px Unbounded;color:{LIME};letter-spacing:-.03em;white-space:nowrap}}
+.row .arr{{font:700 54px Unbounded;color:{MUTED};text-align:center}}
+.row .sold{{font:700 54px Unbounded;color:{LIGHT};letter-spacing:-.03em;white-space:nowrap}}
+.row small{{display:block;white-space:normal;font:500 26px Onest;color:{MUTED};margin-top:6px;letter-spacing:0}}
+.row.head{{border-top:none;padding:0 0 14px;font:500 28px Onest;color:{MUTED}}}
+"""
+
+
+def _vc_page(body: str) -> str:
+    return (f'<!doctype html><html><head><meta charset="utf-8"><style>{hc._fonts_css()}{CSS}{VC_CSS}</style></head>'
+            f'<body><div class="vc">{body}</div></body></html>')
+
+
+def vc_cover(f: dict) -> str:
+    num, unit = money(f["bid"])
+    photo = (f'<div class="vphoto"><img src="{Path(f["photo"]).resolve().as_uri()}"></div>' if f.get("photo") else "")
+    return _vc_page(f"""{_top("ТОРГИ МОСКВЫ")}
+  <div class="cols"><div class="col">
+    <div class="lead">Столько предложили на городских торгах за одно машино-место</div>
+    <div class="big">{escape(num)}</div><div class="unit">{escape(unit)}</div>
+    <div class="exact">{exact(f["bid"])}</div>
+    <div class="note">ставка победителя по протоколу аукциона</div>
+  </div>{photo}</div>""")
+
+
+def vc_ratio(f: dict) -> str:
+    big = 460
+    small = max(big / (f["bid"] / f["start"]) ** 0.5, 6)
+    return _vc_page(f"""{_top("СРАВНИМ")}
+  <div class="cols">
+    <div class="scale">
+      <div><div class="box" style="width:{small:.0f}px;height:{small:.0f}px"></div>
+        <div class="cap">старт<b>{escape(money_text(f["start"]))}</b></div></div>
+      <div><div class="box" style="width:{big}px;height:{big}px"></div>
+        <div class="cap">ставка<b>{escape(money_text(f["bid"]))}</b></div></div>
+    </div>
+    <div class="col"><div class="times">×{times(f["bid"], f["start"])}<small>ставка выше стартовой цены.
+      Площади квадратов — как цены</small></div></div>
+  </div>""")
+
+
+def vc_relist(f: dict) -> str:
+    return _vc_page(f"""{_top("ЧТО БЫЛО ДАЛЬШЕ")}
+  <div class="title">Через {escape(f["months"])} месяца то же место <em>снова</em> на торгах</div>
+  <div class="htl">
+    <div class="ev"><div class="dot on"></div><div class="when">{escape(f["bid_date"])}</div>
+      <div class="what">Ставка <em>{escape(money_text(f["bid"]))}</em> при старте {escape(money_text(f["start"]))}</div></div>
+    <div class="ev"><div class="dot"></div><div class="when">{escape(f["resale_date"])}</div>
+      <div class="what">Повторные торги: продано за <em>{escape(money_text(f["resale_price"]))}</em></div></div>
+  </div>""")
+
+
+def vc_cases(f: dict) -> str:
+    """Все аномальные ставки дома: f["cases"] = [{place, start, bid, bid_date, resale_date, resale_price}]."""
+    rows = "".join(f"""<div class="row"><div class="k">{escape(c["place"])}<small>старт {escape(money_text(c["start"]))}</small></div>
+      <div class="bid">{escape(money_text(c["bid"]))}<small>ставка, {escape(c["bid_date"])}</small></div>
+      <div class="arr">→</div>
+      <div class="sold">{escape(money_text(c["resale_price"]))}<small>продано на повторных, {escape(c["resale_date"])}</small></div>
+      </div>""" for c in f["cases"])
+    return _vc_page(f"""{_top("ОДИН ДОМ")}
+  <div class="title" style="margin-top:36px;font-size:52px">{escape(f["cases_title"])}</div>
+  <div class="rows">{rows}</div>""")
+
+
+VC = (("vc-1-cover", vc_cover), ("vc-2-ratio", vc_ratio), ("vc-3-relist", vc_relist), ("vc-4-cases", vc_cases))
+
+
+def render_vc(facts: dict, out_dir) -> list[Path]:
+    """Картинки для статьи 1600×900: обложка, сравнение, повторные торги и (если есть cases) все случаи дома."""
+    out = Path(out_dir)
+    return [hc.render_html(make(facts), out / f"{name}.png", size=(VW, VH))
+            for name, make in VC if name != "vc-4-cases" or facts.get("cases")]
