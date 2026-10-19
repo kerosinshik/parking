@@ -42,3 +42,8 @@ def test_load_facts(tmp_path):
     p.write_text(json.dumps({"bid": 1}), encoding="utf-8")
     with pytest.raises(ValueError, match="resale_price"):
         overbid.load_facts(p)
+
+
+def test_card_is_square_without_steps():
+    html = overbid.card(FACTS)
+    assert "height:1080px" in html and 'class="steps"' not in html and "2,13" in html

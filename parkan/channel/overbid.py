@@ -210,6 +210,12 @@ def frame_cta(f: dict) -> str:
   <div class="hint">Ищи «{escape(bot)}» в Telegram{word}</div>"""
 
 
+def card(f: dict) -> str:
+    """Карточка поста в Telegram: кадр со ставкой в формате карточек канала (1080×1080, без полосы шагов)."""
+    return (f'<!doctype html><html><head><meta charset="utf-8"><style>{hc._fonts_css()}{CSS}</style></head>'
+            f'<body><div class="post" style="height:1080px;padding:68px 76px">{frame_bid(f)}</div></body></html>')
+
+
 # сценарий: (имя файла, секунды на таймлайне, кадр)
 SCRIPT = (("01-bid", "0–4", frame_bid), ("02-place", "4–9", frame_place), ("03-ratio", "9–14", frame_ratio),
           ("04-words", "14–20", frame_words), ("05-relist", "20–25", frame_relist), ("06-result", "25–30", frame_result),
