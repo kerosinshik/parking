@@ -8,9 +8,9 @@
 - house    — «Целый дом»: пачка новых лотов в одном доме;
 - sold     — «Продано дороже»: итог торгов заметно выше старта;
 - nofight  — «Без борьбы»: один участник, продано по стартовой цене;
-- week     — «Две недели вперёд» (четверг): выгодные лоты с дедлайном заявок в ближайшие 14 дней;
+- week     — «Две недели вперёд» (понедельник и четверг): выгодные лоты с дедлайном заявок в ближайшие 14 дней;
 - deadline — «Заявки заканчиваются» (каждый день): выгодные лоты, приём заявок по которым закрывается через 3 дня;
-- snapshot — «Срез торгов» (вторник и четверг): лоты в продаже, медианы, округа, итоги за 30 дней;
+- snapshot — «Срез торгов» (понедельник и среда): лоты в продаже, медианы, округа, итоги за 30 дней;
 - weekstats — «Итоги недели» (пятница): продано, доля по старту, рекорд;
 - torgi    — «Старт ниже итогов»: квартира в продаже, старт за м² заметно ниже итогов торгов в её доме или районе.
 """
@@ -40,12 +40,12 @@ POLICY = {
     "week_min_discount": 0.15,  # «Две недели вперёд» и «Заявки заканчиваются»
     "week_lots": 7,
     "week_min_lots": 3,         # меньше трёх лотов — подборку не делаем
-    "week_weekday": 3,          # четверг
+    "week_weekdays": (0, 3),    # понедельник и четверг
     "week_days": 14,            # горизонт подборки: соседние подборки частично пересекаются — так и задумано
     "deadline_days": 3,         # «Заявки заканчиваются»: лоты, у которых последний день заявок через 3 дня
     "deadline_lots": 5,
     "deadline_min_lots": 2,
-    "snapshot_weekdays": (1, 3),   # «Срез торгов»: вторник и четверг
+    "snapshot_weekdays": (0, 2),   # «Срез торгов»: понедельник и среда
     "snapshot_days": 30,        # итоги в срезе — за 30 дней
     "weekstats_weekday": 4,     # пятница
     "weekstats_min": 3,         # итогов за неделю по типу, чтобы был пост
@@ -173,9 +173,8 @@ def nofight_posts(results: list[dict], today: date, policy=POLICY) -> list[Post]
 
 
 def week_posts(con, today: date, policy=POLICY) -> list[Post]:
-    y, w, _ = today.isocalendar()
     days = policy["week_days"]
-    return [Post(f"week:{kind}:{y}-W{w:02d}", "week", templates.week(kind, ls, today, days),
+    return [Post(f"week:{kind}:{today.isoformat()}", "week", templates.week(kind, ls, today, days),
                  templates.week_card(kind, ls, today, days), score=1.0, facts=facts.week(kind, ls, today, days))
             for kind, ls in lots.week_ahead(con, today, policy["week_min_discount"], policy["week_lots"], days).items()
             if len(ls) >= policy["week_min_lots"]]
@@ -240,7 +239,7 @@ def default_rubrics(today: date, policy=POLICY) -> tuple[str, ...]:
     r = ["lot", "drop", "house", "sold", "nofight", "torgi", "deadline"]
     if today.weekday() in policy["snapshot_weekdays"]:
         r.append("snapshot")
-    if today.weekday() == policy["week_weekday"]:
+    if today.weekday() in policy["week_weekdays"]:
         r.append("week")
     if today.weekday() == policy["weekstats_weekday"]:
         r.append("weekstats")

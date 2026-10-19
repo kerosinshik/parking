@@ -118,8 +118,8 @@ def test_drafts_all_rubrics_and_registry(con, tmp_path):
     by = {}
     for p in posts:
         by.setdefault(p.rubric, []).append(p)
-    # срез — по вторникам и четвергам, две недели вперёд — по четвергам, итоги недели — по пятницам
-    assert set(by) == {"lot", "drop", "house", "sold", "nofight", "snapshot"}
+    # во вторник — только ежедневные рубрики: срез — пн и ср, две недели вперёд — пн и чт, итоги недели — пт
+    assert set(by) == {"lot", "drop", "house", "sold", "nofight"}
     texts = "\n".join(p.text for p in posts)
     assert "Машино-место на 40 % дешевле района" in texts and "Квартира на 40 % дешевле района за м²" in texts
     assert "📉 <b>Город снизил стартовую цену на 25 %</b>" in texts and "2,00 млн ₽ → <b>1,50 млн ₽</b>" in texts
@@ -141,7 +141,7 @@ def test_week_and_weekstats(con, tmp_path):
     journal(con, tmp_path)
     policy = dict(content.POLICY, week_min_lots=1)
     week = content.drafts(con, tmp_path, date(2026, 10, 5), rubrics=("week",), policy=policy)
-    assert [p.key for p in week] == ["week:parking:2026-W41"]
+    assert [p.key for p in week] == ["week:parking:2026-10-05"]   # ключ по дате: подборки пн и чт одной недели не гасят друг друга
     assert "Две недели вперёд: машино-места" in week[0].text and "до 19 октября" in week[0].text and "ул. Дешёвая, 1" in week[0].text
     assert week[0].card["template"] == "list" and week[0].card["rows"][0]["lead"] == "−40%"
     stats = content.drafts(con, tmp_path, date(2026, 10, 8), results_path=results_csv(tmp_path), rubrics=("weekstats",))
@@ -155,8 +155,8 @@ def test_week_and_weekstats(con, tmp_path):
 def test_default_rubrics_by_weekday():
     days = {d: content.default_rubrics(date(2026, 10, 12 + d)) for d in range(7)}   # 12.10.2026 — понедельник
     assert all("deadline" in r and "lot" in r for r in days.values())
-    assert [d for d, r in days.items() if "snapshot" in r] == [1, 3]
-    assert [d for d, r in days.items() if "week" in r] == [3]
+    assert [d for d, r in days.items() if "snapshot" in r] == [0, 2]
+    assert [d for d, r in days.items() if "week" in r] == [0, 3]
     assert [d for d, r in days.items() if "weekstats" in r] == [4]
 
 
@@ -261,8 +261,8 @@ def test_cli_channel_draft_sends_and_remembers(con, tmp_path, monkeypatch):
     assert main(args) == 0
     day = tmp_path / "out" / "2026-10-06"
     manifest = json.loads((day / "drafts.json").read_text(encoding="utf-8"))
-    assert {m["rubric"] for m in manifest} == {"lot", "drop", "house", "sold", "nofight", "snapshot"}
-    assert (day / "01-snapshot.html").exists() and len(t.calls) == len(manifest)
+    assert {m["rubric"] for m in manifest} == {"lot", "drop", "house", "sold", "nofight"}
+    assert (day / "01-lot.html").exists() and len(t.calls) == len(manifest)
     if html_cards.available():
         assert all(m["card"] for m in manifest)
     assert set(json.loads((tmp_path / "ch" / "drafted.json").read_text())) == {m["key"] for m in manifest}
