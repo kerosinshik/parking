@@ -1,0 +1,347 @@
+<title>Как работает Попутный Метр</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<!-- Схема работы канала. Опубликована как артефакт: https://claude.ai/artifact/SnHyp5BLedAp1bVre92tAT
+     Источник правды — docs/channel.md; при изменении расписания, рубрик или шагов обновлять и эту схему. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Схема-плакат: шапка, полоса расписания, неделя рубрик, две широкие схемы в своих прокручиваемых контейнерах. Цвета канала: тёмно-синий и янтарь. */
+:root {
+  --bg: #f3f5f9;
+  --panel: #e6ebf3;
+  --box: #ffffff;
+  --fg: #14213d;
+  --muted: #56627a;
+  --line: #3d4a66;
+  --accent: #b97800;
+  --accent-soft: #fff1d1;
+  --warn: #a33a2a;
+  --warn-soft: #fbe4df;
+  --font: "Golos Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1729; --panel: #16223a; --box: #1c2b48; --fg: #e8edf6; --muted: #9aa8c2;
+    --line: #a9b6cf; --accent: #f2b632; --accent-soft: #3a2f14; --warn: #f19a89; --warn-soft: #3b1f1d; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1729; --panel: #16223a; --box: #1c2b48; --fg: #e8edf6; --muted: #9aa8c2;
+  --line: #a9b6cf; --accent: #f2b632; --accent-soft: #3a2f14; --warn: #f19a89; --warn-soft: #3b1f1d; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 15px; line-height: 1.5; }
+main {
+  max-width: 1160px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 48px;
+  display: grid; gap: 36px;
+}
+header { display: grid; gap: 8px; max-width: 70ch; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { margin: 0; font-size: clamp(26px, 4vw, 38px); line-height: 1.15; text-wrap: balance; }
+h2 { margin: 0; font-size: 20px; text-wrap: balance; }
+p { margin: 0; }
+.lead { color: var(--muted); }
+code { font-family: var(--mono); font-size: .9em; }
+
+.status { background: var(--warn-soft); border-radius: 8px; padding: 10px 14px; max-width: 75ch; font-size: 14px; }
+.status b { color: var(--warn); font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; margin-right: 6px; }
+
+.timeline { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.slot { background: var(--panel); border-radius: 8px; padding: 10px 12px; display: grid; gap: 2px; align-content: start; }
+.slot b { font-family: var(--mono); font-size: 18px; font-variant-numeric: tabular-nums; }
+.slot span { color: var(--muted); font-size: 13px; }
+.slot.human { background: var(--accent-soft); }
+.slot.human b { color: var(--accent); }
+
+section { display: grid; gap: 12px; }
+figure { margin: 0; display: grid; gap: 10px; }
+.scroll { overflow-x: auto; }
+svg { display: block; width: 100%; min-width: 860px; height: auto; color: var(--line); }
+figcaption { color: var(--muted); max-width: 75ch; font-size: 14px; }
+
+/* Неделя рубрик */
+table.week { border-collapse: separate; border-spacing: 4px; min-width: 760px; width: 100%; font-size: 13px; }
+.week th { font-family: var(--mono); font-weight: 600; font-size: 12px; letter-spacing: .08em; color: var(--muted); text-align: center; padding: 4px; }
+.week th.r { text-align: left; }
+.week td { text-align: center; padding: 6px 4px; border-radius: 4px; background: var(--panel); color: var(--muted); }
+.week td.r { text-align: left; background: none; color: var(--fg); padding-left: 0; }
+.week td.r small { display: block; color: var(--muted); font-size: 12px; }
+.week td.on { background: var(--box); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); font-weight: 600; }
+.week td.hit { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); font-weight: 700; }
+.week tr.sep td { padding: 0; height: 6px; background: none; }
+
+/* SVG */
+.band { fill: var(--panel); }
+.col { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; fill: var(--muted); }
+.b { fill: var(--box); stroke: var(--line); stroke-width: 1.2; }
+.b.store { stroke-dasharray: 5 3; }
+.b.h { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+.b.w { stroke: var(--warn); stroke-width: 1.6; }
+.t1 { font-family: var(--font); font-weight: 700; font-size: 14px; fill: var(--fg); }
+.t1.m { font-family: var(--mono); font-weight: 600; font-size: 13px; }
+.t2 { font-family: var(--font); font-size: 12px; fill: var(--muted); }
+.t2.m { font-family: var(--mono); font-size: 11.5px; }
+.t2.w { fill: var(--warn); }
+.lab { font-family: var(--font); font-size: 12px; fill: var(--fg); }
+.lab.a { fill: var(--accent); font-weight: 600; }
+.ar { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.ar.d { stroke-dasharray: 5 4; }
+.ar.a { stroke: var(--accent); stroke-width: 2; }
+.mk { fill: var(--line); }
+.mk.a { fill: var(--accent); }
+.ptitle { font-family: var(--font); font-weight: 700; font-size: 16px; fill: var(--fg); }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">parkan/channel · схема работы · на 19.10.2026</div>
+    <h1>Как работает «Попутный Метр»</h1>
+    <p class="lead">Канал только читает данные Пульса. Каждое утро код собирает черновики, Claude пишет к ним тексты, проверка сверяет цифры с фактами, бот кладёт всё в закрытую «кухню». Публикует автор вручную, это единственный ручной шаг.</p>
+  </header>
+
+  <p class="status"><b>Сейчас</b>С 16.10 apidata.mos.ru и torgi.mos.ru рвут соединения из облака. Пульс и <code>track-torgi</code> не обновляются, и черновики собираются на данных 15.10. Поэтому пусты «Снижение цены», «Продано дороже» и «Без борьбы». Предложено скачивать данные на VPS автора.</p>
+
+  <section aria-label="Расписание дня">
+    <h2>Сутки канала</h2>
+    <div class="timeline">
+      <div class="slot"><b>6:45</b><span>Пульс: <code>track-sync</code>, <code>track-torgi</code> → ветка data</span></div>
+      <div class="slot"><b>7:20</b><span>диспетчер запускает сессию черновиков: итоги квартир, снимок для бота, черновики, ответы автора; 1-го числа — Росстат</span></div>
+      <div class="slot human"><b>утро</b><span>автор, 15–20 мин: выбирает и публикует</span></div>
+      <div class="slot"><b>9:57 · 13:57</b><span>«Рядом на рынке»: ответы автора</span></div>
+      <div class="slot"><b>19:47</b><span>вечерняя проверка рынка</span></div>
+    </div>
+  </section>
+
+  <section aria-label="Рубрики по дням недели">
+    <h2>Неделя рубрик</h2>
+    <figure>
+      <div class="scroll">
+        <table class="week">
+          <thead>
+            <tr><th class="r" scope="col">Рубрика</th><th scope="col">ПН</th><th scope="col">ВТ</th><th scope="col">СР</th><th scope="col">ЧТ</th><th scope="col">ПТ</th><th scope="col">СБ</th><th scope="col">ВС</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="r">Две недели вперёд<small>выгодные лоты с дедлайном в ближайшие 14 дней</small></td><td class="hit">●</td><td></td><td></td><td class="hit">●</td><td></td><td></td><td></td></tr>
+            <tr><td class="r">Срез торгов<small>лоты в продаже, медианы, округа, итоги за 30 дней</small></td><td class="hit">●</td><td></td><td class="hit">●</td><td></td><td></td><td></td><td></td></tr>
+            <tr><td class="r">Итоги недели<small>продано, доля по старту, рекорд</small></td><td></td><td></td><td></td><td></td><td class="hit">●</td><td></td><td></td></tr>
+            <tr class="sep"><td colspan="8"></td></tr>
+            <tr><td class="r">Лот дня<small>до 2 лотов дешевле медианы района на 25 %+</small></td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td></tr>
+            <tr><td class="r">Заявки заканчиваются<small>приём заявок закрывается через 3 дня</small></td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td></tr>
+            <tr><td class="r">Старт ниже итогов<small>квартира дешевле сделок в доме или районе, до 2 в день</small></td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td></tr>
+            <tr><td class="r">Снижение цены · Целый дом<small>когда в журнале есть повод</small></td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td></tr>
+            <tr><td class="r">Продано дороже · Без борьбы<small>итоги торгов за последние 3 дня</small></td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td><td class="on">●</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <figcaption>Понедельник открывает неделю: в этот день выходят и подборка, и срез, чтобы утренняя рассылка не была бедной. Ежедневные рубрики появляются, только если есть материал. Адрес из «Лота дня», «Целого дома» и «Старта ниже итогов» не повторяется 30 дней. Пороги и дни задаёт <code>POLICY</code> в <code>parkan/channel/content.py</code>.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Утренний конвейер</h2>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 1120 560" role="img" aria-label="Данные идут из открытых источников в Пульс и ветку data, оттуда channel-draft собирает факты и карточки, Claude пишет тексты, channel-lint проверяет, channel-send отправляет в кухню, автор вручную публикует в канал.">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0 0 L10 5 L0 10 z"/></marker>
+          <marker id="aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk a" d="M0 0 L10 5 L0 10 z"/></marker>
+        </defs>
+
+        <!-- колонки -->
+        <rect class="band" x="10" y="45" width="200" height="500" rx="10"/>
+        <rect class="band" x="240" y="45" width="220" height="500" rx="10"/>
+        <rect class="band" x="490" y="45" width="300" height="500" rx="10"/>
+        <rect class="band" x="830" y="45" width="280" height="500" rx="10"/>
+        <text class="col" x="110" y="30" text-anchor="middle">ИСТОЧНИКИ</text>
+        <text class="col" x="350" y="30" text-anchor="middle">ПУЛЬС · 6:45</text>
+        <text class="col" x="640" y="30" text-anchor="middle">ЧЕРНОВИКИ · 7:20</text>
+        <text class="col" x="970" y="30" text-anchor="middle">TELEGRAM</text>
+
+        <!-- источники -->
+        <rect class="b w" x="20" y="80" width="180" height="56" rx="6"/>
+        <text class="t1" x="110" y="103" text-anchor="middle">Открытые данные</text>
+        <text class="t2" x="110" y="122" text-anchor="middle">набор № 1461 — лоты</text>
+
+        <rect class="b w" x="20" y="200" width="180" height="56" rx="6"/>
+        <text class="t1" x="110" y="223" text-anchor="middle">torgi.mos.ru</text>
+        <text class="t2" x="110" y="242" text-anchor="middle">итоги и протоколы</text>
+        <text class="t2 w" x="110" y="285" text-anchor="middle">с 16.10 недоступны</text>
+        <text class="t2 w" x="110" y="301" text-anchor="middle">из облака</text>
+
+        <rect class="b" x="20" y="420" width="180" height="56" rx="6"/>
+        <text class="t1" x="110" y="443" text-anchor="middle">Росстат</text>
+        <text class="t2" x="110" y="462" text-anchor="middle">цена м², раз в квартал</text>
+
+        <!-- Пульс -->
+        <rect class="b" x="255" y="80" width="190" height="56" rx="6"/>
+        <text class="t1 m" x="350" y="103" text-anchor="middle">track-sync</text>
+        <text class="t2" x="350" y="122" text-anchor="middle">журнал лотов (parquet)</text>
+
+        <rect class="b" x="255" y="200" width="190" height="56" rx="6"/>
+        <text class="t1 m" x="350" y="223" text-anchor="middle">track-torgi</text>
+        <text class="t2" x="350" y="242" text-anchor="middle">таблица итогов (CSV)</text>
+
+        <rect class="b store" x="255" y="320" width="190" height="156" rx="6"/>
+        <text class="t1" x="350" y="345" text-anchor="middle">ветка data (git)</text>
+        <text class="t2 m" x="270" y="372">state/ — журнал</text>
+        <text class="t2 m" x="270" y="394">results/ — итоги</text>
+        <text class="t2 m" x="270" y="416">market/ — рынок</text>
+        <text class="t2 m" x="270" y="438">channel_state/ —</text>
+        <text class="t2 m" x="270" y="456">  что уже уходило</text>
+
+        <path class="ar" d="M200 108 H253" marker-end="url(#ah)"/>
+        <path class="ar" d="M200 228 H253" marker-end="url(#ah)"/>
+        <path class="ar" d="M200 448 H253" marker-end="url(#ah)"/>
+        <text class="lab" x="226" y="440" text-anchor="middle">1-го</text>
+        <path class="ar" d="M350 136 V198" marker-end="url(#ah)"/>
+        <path class="ar" d="M350 256 V318" marker-end="url(#ah)"/>
+        <text class="lab" x="358" y="292">коммит</text>
+
+        <!-- черновики -->
+        <rect class="b" x="505" y="80" width="270" height="60" rx="6"/>
+        <text class="t1 m" x="640" y="104" text-anchor="middle">channel-draft</text>
+        <text class="t2" x="640" y="124" text-anchor="middle">рубрики дня по POLICY, карточки PNG</text>
+
+        <rect class="b store" x="505" y="180" width="270" height="60" rx="6"/>
+        <text class="t1 m" x="640" y="204" text-anchor="middle">channel_out/&lt;дата&gt;/</text>
+        <text class="t2 m" x="640" y="224" text-anchor="middle">NN.facts.json · .png · .html</text>
+
+        <rect class="b" x="505" y="280" width="270" height="60" rx="6"/>
+        <text class="t1" x="640" y="304" text-anchor="middle">Claude, навык channel-copy</text>
+        <text class="t2" x="640" y="324" text-anchor="middle">пишет NN.txt только по фактам</text>
+
+        <rect class="b" x="505" y="380" width="270" height="60" rx="6"/>
+        <text class="t1 m" x="640" y="404" text-anchor="middle">channel-lint</text>
+        <text class="t2" x="640" y="424" text-anchor="middle">каждое число и ссылка — из фактов</text>
+
+        <rect class="b" x="505" y="470" width="270" height="60" rx="6"/>
+        <text class="t1 m" x="640" y="494" text-anchor="middle">channel-send</text>
+        <text class="t2" x="640" y="514" text-anchor="middle">не прошёл проверку — шаблонный текст</text>
+
+        <path class="ar" d="M445 340 H475 V110 H503" marker-end="url(#ah)"/>
+        <text class="lab" x="482" y="72" text-anchor="middle">читает</text>
+        <path class="ar" d="M640 140 V178" marker-end="url(#ah)"/>
+        <path class="ar" d="M640 240 V278" marker-end="url(#ah)"/>
+        <path class="ar" d="M640 340 V378" marker-end="url(#ah)"/>
+        <path class="ar" d="M640 440 V468" marker-end="url(#ah)"/>
+        <path class="ar d" d="M505 515 H460 V472 H447" marker-end="url(#ah)"/>
+        <text class="lab" x="470" y="540" text-anchor="middle">drafted.json: без повторов</text>
+
+        <!-- Telegram -->
+        <rect class="b" x="845" y="80" width="250" height="60" rx="6"/>
+        <text class="t1" x="970" y="104" text-anchor="middle">Кухня</text>
+        <text class="t2" x="970" y="124" text-anchor="middle">закрытый канал с черновиками</text>
+
+        <rect class="b h" x="845" y="195" width="250" height="76" rx="6"/>
+        <text class="t1" x="970" y="220" text-anchor="middle">Автор, 15–20 мин</text>
+        <text class="t2" x="970" y="240" text-anchor="middle">выбирает посты, меняет</text>
+        <text class="t2" x="970" y="257" text-anchor="middle">«✏️ ваш комментарий» на свою фразу</text>
+
+        <rect class="b" x="845" y="330" width="250" height="60" rx="6"/>
+        <text class="t1" x="970" y="354" text-anchor="middle">@poputny_metr</text>
+        <text class="t2" x="970" y="374" text-anchor="middle">публичный канал</text>
+
+        <rect class="b" x="845" y="450" width="250" height="60" rx="6"/>
+        <text class="t1" x="970" y="474" text-anchor="middle">Подписчики</text>
+        <text class="t2" x="970" y="494" text-anchor="middle">читают, пересылают в чаты</text>
+
+        <path class="ar" d="M775 500 H810 V110 H843" marker-end="url(#ah)"/>
+        <text class="lab" x="802" y="300" text-anchor="middle" transform="rotate(-90 802 300)">Bot API</text>
+        <path class="ar a" d="M970 140 V193" marker-end="url(#aha)"/>
+        <text class="lab a" x="980" y="172">открывает утром</text>
+        <path class="ar a" d="M970 271 V328" marker-end="url(#aha)"/>
+        <text class="lab a" x="980" y="304">копирует, отложенная публикация</text>
+        <path class="ar" d="M970 390 V448" marker-end="url(#ah)"/>
+      </svg>
+      </div>
+      <figcaption>Всё слева от кухни работает само в облачной сессии Claude. Квартиры сессия черновиков досчитывает своим <code>track-torgi --types квартира</code> в отдельную таблицу, чтобы не писать в файл Пульса. Пульс о канале ничего не знает: свои пороги у канала лежат в <code>POLICY</code>. Кнопки «проверить рынок» приходят отдельным ответом на черновик, чтобы пост пересылался в канал без них.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Две петли вокруг утреннего конвейера</h2>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 1120 400" role="img" aria-label="Слева: автор отвечает на черновик лота ссылками на объявления, channel-market считает разницу с рынком и присылает черновик «Рядом на рынке». Справа: пост пересылают в чаты, люди без подписки идут по ссылке в бота, бот показывает карточку лота и ведёт в канал.">
+        <defs>
+          <marker id="bh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0 0 L10 5 L0 10 z"/></marker>
+          <marker id="bha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk a" d="M0 0 L10 5 L0 10 z"/></marker>
+        </defs>
+
+        <rect class="band" x="0" y="0" width="540" height="400" rx="10"/>
+        <rect class="band" x="580" y="0" width="540" height="400" rx="10"/>
+
+        <!-- рынок -->
+        <text class="ptitle" x="20" y="34">«Рядом на рынке»</text>
+        <rect class="b" x="20" y="60" width="180" height="64" rx="6"/>
+        <text class="t1" x="110" y="86" text-anchor="middle">Кухня</text>
+        <text class="t2" x="110" y="106" text-anchor="middle">лот дешевле медианы</text>
+
+        <rect class="b h" x="340" y="60" width="180" height="64" rx="6"/>
+        <text class="t1" x="430" y="86" text-anchor="middle">Автор</text>
+        <text class="t2" x="430" y="106" text-anchor="middle">смотрит объявления</text>
+
+        <rect class="b" x="340" y="230" width="180" height="64" rx="6"/>
+        <text class="t1 m" x="430" y="256" text-anchor="middle">channel-market</text>
+        <text class="t2" x="430" y="276" text-anchor="middle">₽/м², медиана, разница</text>
+
+        <rect class="b" x="20" y="230" width="180" height="64" rx="6"/>
+        <text class="t1" x="110" y="256" text-anchor="middle">copy → lint → send</text>
+        <text class="t2" x="110" y="276" text-anchor="middle">текст по фактам</text>
+
+        <path class="ar" d="M200 92 H338" marker-end="url(#bh)"/>
+        <text class="lab" x="270" y="82" text-anchor="middle">кнопки ЦИАН · Авито</text>
+        <path class="ar a" d="M430 124 V228" marker-end="url(#bha)"/>
+        <text class="lab a" x="420" y="172" text-anchor="end">reply: ссылка,</text>
+        <text class="lab a" x="420" y="188" text-anchor="end">цена, площадь</text>
+        <path class="ar" d="M340 262 H202" marker-end="url(#bh)"/>
+        <text class="lab" x="270" y="252" text-anchor="middle">факты</text>
+        <path class="ar" d="M110 230 V126" marker-end="url(#bh)"/>
+        <text class="lab" x="120" y="182">новый черновик</text>
+        <text class="t2" x="430" y="320" text-anchor="middle">getUpdates в 7:20 · 9:57 · 13:57 · 19:47</text>
+        <text class="t2" x="20" y="370">Объявления код не собирает (правила площадок),</text>
+        <text class="t2" x="20" y="388">их приносит автор; бот только считает и оформляет.</text>
+
+        <!-- привлечение -->
+        <text class="ptitle" x="600" y="34">Привлечение через бота</text>
+        <rect class="b" x="600" y="60" width="180" height="64" rx="6"/>
+        <text class="t1" x="690" y="86" text-anchor="middle">Пост в канале</text>
+        <text class="t2 m" x="690" y="106" text-anchor="middle">?start=lot_&lt;id&gt;</text>
+
+        <rect class="b" x="920" y="60" width="180" height="64" rx="6"/>
+        <text class="t1" x="1010" y="86" text-anchor="middle">Чаты, Reels, vc.ru</text>
+        <text class="t2" x="1010" y="106" text-anchor="middle">люди без подписки</text>
+
+        <rect class="b" x="920" y="230" width="180" height="64" rx="6"/>
+        <text class="t1" x="1010" y="256" text-anchor="middle">@poputny_metr_bot</text>
+        <text class="t2" x="1010" y="276" text-anchor="middle">карточка, подборки, игра</text>
+
+        <rect class="b" x="600" y="230" width="180" height="64" rx="6"/>
+        <text class="t1" x="690" y="256" text-anchor="middle">Подписка</text>
+        <text class="t2" x="690" y="276" text-anchor="middle">на @poputny_metr</text>
+
+        <rect class="b store" x="920" y="340" width="180" height="44" rx="6"/>
+        <text class="t2 m" x="1010" y="367" text-anchor="middle">lots.json · ветка data</text>
+
+        <path class="ar" d="M780 92 H918" marker-end="url(#bh)"/>
+        <text class="lab" x="850" y="82" text-anchor="middle">пересылают</text>
+        <path class="ar" d="M1010 124 V228" marker-end="url(#bh)"/>
+        <text class="lab" x="1000" y="172" text-anchor="end">ссылка с меткой</text>
+        <text class="lab" x="1000" y="188" text-anchor="end">или кодовое слово</text>
+        <path class="ar a" d="M920 262 H782" marker-end="url(#bha)"/>
+        <text class="lab a" x="850" y="252" text-anchor="middle">«Подписаться»</text>
+        <path class="ar" d="M690 230 V126" marker-end="url(#bh)"/>
+        <text class="lab" x="700" y="182">новые посты</text>
+        <path class="ar d" d="M1010 340 V296" marker-end="url(#bh)"/>
+        <text class="lab" x="1020" y="324">git pull, cron</text>
+        <text class="t2" x="600" y="370">Бот живёт на VPS автора. /stats считает,</text>
+        <text class="t2" x="600" y="388">откуда пришли по меткам и кто подписался.</text>
+      </svg>
+      </div>
+      <figcaption>Янтарным отмечены шаги, которые делает автор. Снимок для бота готовит <code>channel-export</code> в утренней сессии; карточки лота и дома открыты всем, подборки по округам и уведомления — подписчикам канала. Бот отвечает на кнопку сразу, а карточку дорисовывает в фоне.</figcaption>
+    </figure>
+  </section>
+</main>
