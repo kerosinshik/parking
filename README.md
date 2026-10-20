@@ -227,6 +227,7 @@ parkan market-add --file new.csv            # рыночные цены по р�
 parkan market-status                        # каких районов не хватает для сравнения квартир с рынком
 parkan market-rosstat                       # средние цены на жильё по Москве от Росстата → журнал рынка
 parkan market-page --out data/market.html   # страница «Рынок квартир»: журнал рынка и квартиры на торгах
+parkan channel-yearstats --results results/torgi-mashinomesta.csv --out <папка>   # аналитика года для статьи: facts.json и графики
 ```
 
 Бот-дорвей канала (подборки лотов по округам, уведомления о новых, игра «Угадай цену»; полная подборка —

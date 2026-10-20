@@ -437,6 +437,17 @@ def cmd_channel_reel(a, con) -> int:
     return 0
 
 
+def cmd_channel_yearstats(a, con) -> int:
+    """Аналитика года торгов машино-местами для статьи: facts.json и графики 1600×900."""
+    from . import yearstats
+    facts = yearstats.compute(a.results, min_house_sales=a.min_house_sales)
+    print(f"Факты: {yearstats.save_facts(facts, Path(a.out) / 'facts.json')}")
+    if not a.no_images:
+        for p in yearstats.render(facts, a.out):
+            print(p)
+    return 0
+
+
 def register(sub) -> None:
     sp = sub.add_parser("channel-draft", help="черновики постов для Telegram-канала (docs/channel.md)")
     sp.add_argument("--state-dir", default=default_state_dir(), help="журнал Пульса (track-sync)")
@@ -500,6 +511,13 @@ def register(sub) -> None:
     sp.add_argument("--campaigns", help="записать метку ролика в campaigns.json бота "
                                         "(обычно <data>/channel_state/bot/campaigns.json)")
     sp.set_defaults(fn=cmd_channel_reel, track=True)
+
+    sp = sub.add_parser("channel-yearstats", help="аналитика года торгов машино-местами для статьи: факты и графики")
+    sp.add_argument("--results", required=True, help="таблица итогов машино-мест (track-torgi --results)")
+    sp.add_argument("--out", default="channel_out/yearstats", help="папка для facts.json и vc-*.png")
+    sp.add_argument("--min-house-sales", type=int, default=10, help="дом в расчётах по домам — от стольких продаж")
+    sp.add_argument("--no-images", action="store_true", help="только facts.json, без картинок")
+    sp.set_defaults(fn=cmd_channel_yearstats, track=True)
 
     sp = sub.add_parser("market-add", help="дописать рыночные цены из CSV в журнал рынка (docs/channel.md)")
     sp.add_argument("--file", required=True, help="CSV с колонками " + ", ".join(market.FIELDS[:-1]))
