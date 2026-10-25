@@ -43,9 +43,13 @@ def chrome_path() -> str | None:
     # Chromium Playwright: общий (/opt/pw-browsers, PLAYWRIGHT_BROWSERS_PATH) или в кэше пользователя
     roots = [os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or "", "/opt/pw-browsers",
              str(Path.home() / ".cache/ms-playwright")]
-    for root in filter(None, roots):
-        for p in sorted(glob.glob(f"{root}/chromium-*/chrome-linux*/chrome"), reverse=True):
-            return p
+    # сначала chrome-headless-shell: полный Chrome 153 в облаке зависает на --screenshot почти в каждом запуске
+    for pattern in ("chromium_headless_shell-*/chrome-headless-shell-linux*/chrome-headless-shell",
+                    "chromium_headless_shell-*/chrome-linux*/headless_shell",
+                    "chromium-*/chrome-linux*/chrome"):
+        for root in filter(None, roots):
+            for p in sorted(glob.glob(f"{root}/{pattern}"), reverse=True):
+                return p
     for name in ("chromium", "chromium-browser", "google-chrome", "chrome"):
         if shutil.which(name):
             return shutil.which(name)
@@ -288,16 +292,17 @@ def render_html(html: str, out_path, chrome: str | None = None, size: tuple[int,
         page, shot = Path(tmp) / "card.html", Path(tmp) / "shot.png"
         page.write_text(html, encoding="utf-8")
         # окно выше карточки: у headless-режима видимая область меньше окна, низ иначе обрезается
-        args = [chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
+        headless = [] if "headless" in Path(chrome).name else ["--headless=new"]   # у headless-shell режим свой
+        args = [chrome, *headless, "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
                 "--disable-background-networking", "--disable-component-update", "--no-first-run",
                 "--force-device-scale-factor=1", f"--window-size={size[0]},{size[1] + 320}",
                 "--allow-file-access-from-files", f"--user-data-dir={tmp}/profile",
                 f"--screenshot={shot}", page.as_uri()]
         try:
-            subprocess.run(args[:1] + ["--virtual-time-budget=3000"] + args[1:], check=True, capture_output=True, timeout=60)
+            subprocess.run(args[:1] + ["--virtual-time-budget=3000"] + args[1:], check=True, capture_output=True, timeout=30)
         except subprocess.TimeoutExpired:
             # в части облачных контейнеров виртуальное время зависает — второй заход без него
-            subprocess.run(args, check=True, capture_output=True, timeout=60)
+            subprocess.run(args, check=True, capture_output=True, timeout=30)
         if not shot.exists():
             raise RuntimeError("Chromium не сохранил карточку")
         Image.open(shot).convert("RGB").crop((0, 0, *size)).save(out, "PNG", optimize=True)
