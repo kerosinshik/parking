@@ -288,11 +288,16 @@ def render_html(html: str, out_path, chrome: str | None = None, size: tuple[int,
         page, shot = Path(tmp) / "card.html", Path(tmp) / "shot.png"
         page.write_text(html, encoding="utf-8")
         # окно выше карточки: у headless-режима видимая область меньше окна, низ иначе обрезается
-        subprocess.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
-                        "--force-device-scale-factor=1", f"--window-size={size[0]},{size[1] + 320}", "--virtual-time-budget=3000",
-                        "--allow-file-access-from-files", f"--user-data-dir={tmp}/profile",
-                        f"--screenshot={shot}", page.as_uri()],
-                       check=True, capture_output=True, timeout=90)
+        args = [chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
+                "--disable-background-networking", "--disable-component-update", "--no-first-run",
+                "--force-device-scale-factor=1", f"--window-size={size[0]},{size[1] + 320}",
+                "--allow-file-access-from-files", f"--user-data-dir={tmp}/profile",
+                f"--screenshot={shot}", page.as_uri()]
+        try:
+            subprocess.run(args[:1] + ["--virtual-time-budget=3000"] + args[1:], check=True, capture_output=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            # в части облачных контейнеров виртуальное время зависает — второй заход без него
+            subprocess.run(args, check=True, capture_output=True, timeout=60)
         if not shot.exists():
             raise RuntimeError("Chromium не сохранил карточку")
         Image.open(shot).convert("RGB").crop((0, 0, *size)).save(out, "PNG", optimize=True)
