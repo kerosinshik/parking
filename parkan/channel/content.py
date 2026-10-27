@@ -36,6 +36,7 @@ POLICY = {
     "sold_per_day": 2,
     "nofight_per_day": 1,
     "lot_fallback_days_left": 3,
+    "lot_fallback_min_discount": 0.15,  # запас «Лота дня»: лоты дешевле медианы на 15 %+ (лучшие — первыми), когда 25 %+ уже выходили
     "address_repeat_days": 30,  # адрес из «Старт ниже итогов», «Лота дня», «Целого дома» не повторяется 30 дней   # «Лот дня» из лотов в продаже: до конца заявок хотя бы 3 дня
     "week_min_discount": 0.15,  # «Две недели вперёд» и «Заявки заканчиваются»
     "week_lots": 7,
@@ -287,7 +288,7 @@ def drafts(con, state_dir, today: date, *, results_path=None, rubrics=None, regi
         sent_today = sum(1 for k, d in registry.items() if k.startswith("lot:") and str(d)[:10] == today.isoformat())
         room = policy["lots_per_day"] - len(posts) - sent_today
         if room > 0:
-            spare = lots.best_deals(con, today, policy["lot_min_discount"], policy["lot_fallback_days_left"])
+            spare = lots.best_deals(con, today, policy["lot_fallback_min_discount"], policy["lot_fallback_days_left"])
             taken = {p.key for p in posts}
             spare = [p for p in free(fresh(lot_posts(con, state_dir, today, policy, obs, sold, rows=spare)))
                      if p.key not in taken]
