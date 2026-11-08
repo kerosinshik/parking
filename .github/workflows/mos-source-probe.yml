@@ -1,0 +1,79 @@
+name: Probe Moscow data sources
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/mos-source-probe]
+    paths: [.github/workflows/mos-source-probe.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install collector
+        run: python -m pip install .
+      - name: Fetch small samples
+        env:
+          MOS_API_KEY: ${{ secrets.MOS_API_KEY }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from parkan.sources.mosdata import MosDataClient
+          from parkan.track.torgi import page_transport, parse_page
+          out = Path("probe-output")
+          out.mkdir(exist_ok=True)
+          report = {}
+          key = os.environ.get("MOS_API_KEY", "")
+          if key:
+              try:
+                  client = MosDataClient(key, page_size=3)
+                  count = client.count(1461)
+                  sample = client.features_page(1461, 0, 3)
+                  if not sample:
+                      raise ValueError("empty sample")
+                  (out / "dataset-1461-sample.json").write_text(
+                      json.dumps(sample, ensure_ascii=False, indent=2), encoding="utf-8")
+                  report["apidata"] = {"status": "ok", "total": count, "sample_rows": len(sample)}
+              except Exception as exc:
+                  # Exceptions can contain request URLs with the API key; never print them.
+                  report["apidata"] = {"status": "error", "error_type": type(exc).__name__}
+          else:
+              report["apidata"] = {"status": "missing_secret", "secret": "MOS_API_KEY"}
+          try:
+              status, html = page_transport("https://torgi.mos.ru/tender/16909867", timeout=20)
+              report["torgi"] = {"http_status": status}
+              if status != 200:
+                  report["torgi"]["status"] = "error"
+              else:
+                  info = parse_page(html)
+                  if not info.get("status"):
+                      raise ValueError("missing lot status")
+                  (out / "torgi-sample.json").write_text(
+                      json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
+                  report["torgi"]["status"] = "ok"
+          except Exception as exc:
+              report["torgi"] = {"status": "error", "error_type": type(exc).__name__}
+          summary = json.dumps(report, ensure_ascii=False, indent=2)
+          (out / "report.json").write_text(summary, encoding="utf-8")
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("## Moscow source probe\n\n```json\n" + summary + "\n```\n")
+          raise SystemExit(0 if all(v.get("status") == "ok" for v in report.values()) else 1)
+          PY
+      - name: Save probe results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mos-source-probe
+          path: probe-output/
+          retention-days: 7
